@@ -2,6 +2,7 @@ import {test,expect} from '@playwright/test';
 import QRCode from 'qrcode';
 import fs from 'node:fs';
 const sample=JSON.parse(fs.readFileSync('public/sample-schedule.json','utf8'));
+async function openMenuAction(page,name){await page.getByRole('button',{name:'更多菜单',exact:true}).click();await page.getByRole('dialog',{name:'更多',exact:true}).getByRole('button',{name,exact:true}).click();}
 test.beforeEach(async({page})=>{await page.clock.install({time:new Date('2026-10-17T04:00:00Z')});await page.goto('/');await expect(page.getByRole('gridcell',{name:'2026-10-17 早班',exact:true})).toBeVisible();});
 test('月历、班次调整、持久保存与移动端布局',async({page})=>{
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -11,6 +12,7 @@ test('月历、班次调整、持久保存与移动端布局',async({page})=>{
  await page.getByRole('dialog').getByRole('button',{name:'休息'}).click();
  await expect(page.getByRole('gridcell',{name:'2026-10-17 休息',exact:true})).toBeVisible();
  await page.reload();await expect(page.getByRole('gridcell',{name:'2026-10-17 休息',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'已阅读',exact:true}).click();
  await page.screenshot({path:'/workspace/tianyu/docs/desktop.png',fullPage:true});
  await page.setViewportSize({width:390,height:844});
  await expect(page.getByRole('heading',{name:/我的倒班日历/})).toBeVisible();
@@ -18,16 +20,16 @@ test('月历、班次调整、持久保存与移动端布局',async({page})=>{
  await page.screenshot({path:'/workspace/tianyu/docs/mobile.png',fullPage:true});expect(errors).toEqual([]);
 });
 test('二维码图片识别、预览覆盖确认、拒绝错误值组',async({page})=>{
- await page.getByRole('button',{name:'扫码导入',exact:true}).click();
+ await openMenuAction(page,'导入排班');
  const png=await QRCode.toBuffer('SZ1:'+JSON.stringify(sample),{width:960,margin:4,errorCorrectionLevel:'M'});
  await page.locator('input[type=file][accept="image/*"]').setInputFiles({name:'schedule.png',mimeType:'image/png',buffer:png});
  await expect(page.getByRole('heading',{name:'找到你的三值排班'})).toBeVisible();
  await page.getByRole('button',{name:'确认导入 396 天'}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
- await page.getByRole('button',{name:'扫码导入',exact:true}).click();await page.getByRole('button',{name:'粘贴内容',exact:true}).click();
+ await openMenuAction(page,'导入排班');await page.getByRole('button',{name:'粘贴内容',exact:true}).click();
  await page.locator('textarea').fill('SZ1:'+JSON.stringify({...sample,team:'二值'}));await page.getByRole('button',{name:'解析并预览'}).click();await expect(page.getByRole('alert')).toContainText('不是三值');
 });
 test('分享二维码下载及 AI 提示词',async({page})=>{
- await page.getByRole('button',{name:'分享排班',exact:true}).click();await expect(page.getByAltText('三值排班导入二维码')).toBeVisible();
+ await openMenuAction(page,'分享排班');await expect(page.getByAltText('三值排班导入二维码')).toBeVisible();
  const pending=page.waitForEvent('download');await page.getByRole('button',{name:'保存二维码'}).click();const d=await pending;expect(d.suggestedFilename()).toBe('三值排班-2025-12-01.png');
  await expect(page.getByRole('dialog').getByRole('button',{name:'复制 AI 提示词',exact:true})).toBeVisible();
 });
@@ -63,7 +65,7 @@ test('旧版更新保留调整过的排班，暂停旧提醒并提示核对',asy
  const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));expect(saved.settings.schemaVersion).toBe(2);expect(saved.settings.enabled).toBe(false);expect(saved.settings.confirmed).toBe(false);
 });
 if(process.env.EXCEL_FIXTURE)test('从用户原始 Excel 文件直接导入整年三值排班',async({page})=>{
- await page.getByRole('button',{name:'扫码导入',exact:true}).click();await page.getByRole('button',{name:'Excel 表格',exact:true}).click();
+ await openMenuAction(page,'导入排班');await page.getByRole('button',{name:'Excel 表格',exact:true}).click();
  await page.locator('input[type=file][accept=".xlsx"]').setInputFiles(process.env.EXCEL_FIXTURE);
  await expect(page.getByRole('heading',{name:'找到你的三值排班'})).toBeVisible();
  await expect(page.getByText('2025-12-01 — 2026-12-31',{exact:true})).toBeVisible();
@@ -75,4 +77,22 @@ test('新人同手机流程：保存教程二维码到相册，再从图片识�
  await page.getByRole('button',{name:'我已经有二维码，去导入'}).click();await page.locator('input[type=file][accept="image/*"]').setInputFiles({name:'AI示例二维码.png',mimeType:'image/png',buffer});
  await expect(page.getByRole('button',{name:'确认导入 6 天'})).toBeVisible();await expect(page.getByText('2026-10-19 — 2026-10-24',{exact:true})).toBeVisible();
  await page.getByRole('button',{name:'确认导入 6 天'}).click();await expect(page.getByRole('gridcell',{name:'2026-10-23 下夜',exact:true})).toBeVisible();
+});
+
+test('首次提示确认已阅读后持久隐藏，右上角菜单可重看教程',async({page})=>{
+ const intro=page.getByRole('region',{name:'AI 排班二维码导入入门'});await expect(intro).toBeVisible();
+ const before=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));
+ await intro.getByRole('button',{name:'已阅读',exact:true}).click();await expect(intro).toHaveCount(0);
+ await page.reload();await expect(page.getByRole('gridcell',{name:'2026-10-17 早班',exact:true})).toBeVisible();await expect(intro).toHaveCount(0);
+ const after=await page.evaluate(()=>({read:localStorage.getItem('sanzhi-ai-guide-read-v1'),data:JSON.parse(localStorage.getItem('sanzhi-calendar-v1'))}));expect(after.read).toBe('1');expect(after.data.schedule).toEqual(before.schedule);expect(after.data.settings).toMatchObject(before.settings);
+ await openMenuAction(page,'查看 AI 导入教程');await expect(page.getByAltText('6天三值排班教学二维码')).toBeVisible();await expect(page.getByRole('dialog').getByRole('button',{name:'复制 AI 提示词',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'返回日历',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);await expect(intro).toHaveCount(0);
+});
+test('手机首页移除重复操作，底部导入分享及菜单继续可用',async({page})=>{
+ await page.setViewportSize({width:390,height:844});await expect(page.locator('.page-heading').getByRole('button')).toHaveCount(0);
+ await page.getByRole('button',{name:'已阅读',exact:true}).click();
+ const bottom=page.getByRole('navigation',{name:'底部导航'});await expect(bottom).toBeVisible();
+ await bottom.getByRole('button',{name:'导入',exact:true}).click();await expect(page.getByRole('dialog',{name:'导入我的排班'})).toBeVisible();await page.getByRole('button',{name:'关闭',exact:true}).click();
+ await bottom.getByRole('button',{name:'分享',exact:true}).click();await expect(page.getByAltText('三值排班导入二维码')).toBeVisible();await page.getByRole('button',{name:'关闭',exact:true}).click();
+ await openMenuAction(page,'查看 AI 导入教程');await expect(page.getByRole('dialog',{name:'Excel → AI → 二维码导入教程'})).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });

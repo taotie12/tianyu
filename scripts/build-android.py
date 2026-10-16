@@ -24,5 +24,5 @@ properties.write_text(text)
 for command in (['npm','run','build'],['npx','--no-install','cap','sync','android'],[str(repo/'android/gradlew'),'-p','android',':app:assembleDebug','--no-daemon','--max-workers=4','-Duser.home=/workspace/.cache/java']):
     subprocess.run(command,cwd=repo,env=env,check=True)
 release=repo/'releases';release.mkdir(exist_ok=True)
-shutil.copy2(repo/'android/app/build/outputs/apk/debug/app-debug.apk',release/'值日-三值-v1.1.apk')
-print('APK saved:',release/'值日-三值-v1.1.apk')
+shutil.copy2(repo/'android/app/build/outputs/apk/debug/app-debug.apk',release/'值日-三值-v1.2.apk')
+print('APK saved:',release/'值日-三值-v1.2.apk')

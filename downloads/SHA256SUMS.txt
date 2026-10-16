@@ -1,2 +1,3 @@
 6213aa1723bf679a34f5d10535858361da66ca9b84d393ecf85cfcfa6612202e  sanzhi-calendar-v1.0.apk
 bee6695e5169bf193557a3e0939bad1fadac460b635ea6dc1c9b3c0e88d27c9c  sanzhi-calendar-v1.1.apk
+c085f0582824a2ff2a866dc61c4902736428880dedbf2d47efadd0ab8dfa2f35  sanzhi-calendar-v1.2.apk
