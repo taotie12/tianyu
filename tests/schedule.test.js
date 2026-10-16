@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import ExcelJS from 'exceljs';
 import QRCode from 'qrcode';
 import jsQR from 'jsqr';
-import {addDays,validatePayload,unpack,pack,importSummary,defaultSettings,reminderEvents,toICS,dateKey} from '../src/schedule';
+import {addDays,validatePayload,unpack,pack,importSummary,defaultSettings,normalizeSettings,validateSettings,dayInfo,reminderEvents,toICS,dateKey,timeLabel} from '../src/schedule';
 import {parseExcel} from '../src/excel';
 const sample=JSON.parse(readFileSync(new URL('../public/sample-schedule.json',import.meta.url),'utf8'));
 const payload=(days='DANOT')=>({v:1,team:'三值',start:'2026-01-01',days,tz:'Asia/Shanghai'});
@@ -16,11 +16,54 @@ describe('排班数据协议',()=>{
  it('拒绝不连续日期分享',()=>expect(()=>pack({'2026-01-01':'D','2026-01-03':'A'},'2026-01-01','2026-01-03')).toThrow('没有排班'));
  it('闰日与上海日期正确',()=>{expect(addDays('2028-02-28',1)).toBe('2028-02-29');expect(addDays('2026-12-31',1)).toBe('2027-01-01');expect(dateKey(new Date('2026-01-01T20:00:00Z'))).toBe('2026-01-02');});
 });
-describe('提醒',()=>{
- it('未确认时间不安排提醒',()=>expect(reminderEvents(unpack(payload()),defaultSettings(),0)).toEqual([]));
- it('按北京时间提前提醒，休息不提醒，过滤已过时间',()=>{const s={...defaultSettings(),confirmed:true};const events=reminderEvents(unpack(payload()),s,Date.parse('2025-12-31T00:00Z'));expect(events).toHaveLength(4);expect(new Date(events[0].at).toISOString()).toBe('2025-12-31T23:30:00.000Z');expect(events.find(x=>x.code==='A').end-events.find(x=>x.code==='A').start).toBe(8*3600000);expect(reminderEvents(unpack(payload()),s,Date.parse('2027-01-01T00:00Z'))).toEqual([]);});
- it('零点夜班提前提醒在前一天；23点夜班跨天',()=>{const s=defaultSettings();s.confirmed=true;const first=reminderEvents(unpack(payload('N')),s,0)[0];expect(new Date(first.at).toISOString()).toBe('2025-12-31T15:30:00.000Z');s.times.N={start:'23:00',end:'07:00'};const e=reminderEvents(unpack(payload('N')),s,0)[0];expect(e.end-e.start).toBe(8*3600000);});
- it('日历文件含有效时区时间及提前提醒',()=>{const s={...defaultSettings(),confirmed:true};const text=toICS(unpack(payload('DO')),s,0);expect(text.match(/BEGIN:VEVENT/g)).toHaveLength(1);expect(text).toContain('DTSTART:20260101T000000Z');expect(text).toContain('TRIGGER:-PT30M');expect(text.endsWith('END:VCALENDAR\r\n')).toBe(true);});
+describe('实际作息与夜班交接',()=>{
+ const sampleData=unpack(sample);
+ it('中班后的休显示上夜，最后一个夜显示下夜，原始编码保持不变',()=>{
+  expect(dayInfo(sampleData,'2026-10-21').kind).toBe('U');expect(dayInfo(sampleData,'2026-10-22').kind).toBe('N');expect(dayInfo(sampleData,'2026-10-23').kind).toBe('L');
+  expect(sampleData['2026-10-21']).toBe('O');expect(sampleData['2026-10-23']).toBe('N');expect(pack(sampleData,'2026-10-19','2026-10-24').days).toBe('AAONNO');
+ });
+ it('跨月、跨年识别；缺少下一天时不猜测下夜',()=>{
+  const data={'2026-12-30':'A','2026-12-31':'O','2027-01-01':'N','2027-01-02':'N','2027-01-03':'O'};
+  expect(dayInfo(data,'2026-12-31').kind).toBe('U');expect(dayInfo(data,'2027-01-02').kind).toBe('L');expect(dayInfo({'2027-01-01':'N'},'2027-01-01').kind).toBe('N');
+ });
+ it('单个夜班也会标下夜；真实休息日不误标',()=>{expect(dayInfo({'2026-01-01':'O','2026-01-02':'N','2026-01-03':'O'},'2026-01-02').kind).toBe('L');expect(dayInfo({'2026-01-01':'A','2026-01-02':'O','2026-01-03':'O'},'2026-01-02').kind).toBe('O');});
+ it('早班起床06:40、班车07:00提醒；中班15:00提醒；夜班前晚22:00提醒',()=>{
+  const events=reminderEvents({'2026-01-01':'D','2026-01-02':'A','2026-01-03':'N'},defaultSettings(),0);
+  expect(events.map(e=>[e.code,e.kind,e.reminderDate,timeLabel(e.at)])).toEqual([['D','wake','2026-01-01','06:40'],['D','bus','2026-01-01','07:00'],['A','bus','2026-01-02','15:00'],['N','bus','2026-01-02','22:00']]);
+  expect(events.at(-1).body).toContain('2026-01-02 22:10');expect(events.at(-1).body).toContain('2026-01-03 00:00');
+ });
+ it('上夜不增加虚构第三班，下夜当天晚上没有夜班车提醒',()=>{
+  const data=unpack({v:1,team:'三值',start:'2026-10-19',days:'AAONNO',tz:'Asia/Shanghai'});
+  const events=reminderEvents(data,defaultSettings(),0).filter(e=>e.code==='N');
+  expect(events.map(e=>[e.date,e.reminderDate,timeLabel(e.at)])).toEqual([['2026-10-22','2026-10-21','22:00'],['2026-10-23','2026-10-22','22:00']]);
+  expect(events.some(e=>e.reminderDate==='2026-10-23')).toBe(false);
+ });
+ it('夜班1月1日00点的班车提醒落在上一年12月31日',()=>{
+  const e=reminderEvents({'2027-01-01':'N'},defaultSettings(),0)[0];expect(new Date(e.at).toISOString()).toBe('2026-12-31T14:00:00.000Z');expect(e.reminderDate).toBe('2026-12-31');
+ });
+ it('班车提前量可改为5分钟或发车时；不改变实际发车时间',()=>{
+  const s=defaultSettings();s.routine.busAdvance=5;let e=reminderEvents({'2026-01-01':'N'},s,0)[0];expect(timeLabel(e.at)).toBe('22:05');expect(e.body).toContain('22:10');s.routine.busAdvance=0;e=reminderEvents({'2026-01-01':'N'},s,0)[0];expect(timeLabel(e.at)).toBe('22:10');
+ });
+ it('未确认作息不安排闹钟；培训默认不套用早班',()=>{
+  const s=defaultSettings();s.confirmed=false;expect(reminderEvents({'2026-01-01':'D'},s,0)).toEqual([]);s.confirmed=true;expect(reminderEvents({'2026-01-01':'T'},s,0)).toEqual([]);s.routine.trainingEnabled=true;const events=reminderEvents({'2026-01-01':'T'},s,0);expect(events).toHaveLength(1);expect(events[0].kind).toBe('training');
+ });
+ it('不补发已过的起床闹钟，但保留稍后的班车提醒',()=>{
+  const now=Date.parse('2026-01-01T06:50:00+08:00');const events=reminderEvents({'2026-01-01':'D'},defaultSettings(),now);expect(events).toHaveLength(1);expect(events[0].kind).toBe('bus');expect(reminderEvents({'2026-01-01':'D'},defaultSettings(),Date.parse('2026-01-01T07:05:00+08:00'))).toHaveLength(0);
+ });
+ it('400天三类提醒的ID全部唯一，修改日期不会覆盖另一种闹钟',()=>{
+  const s=defaultSettings();s.routine.startEnabled=true;const events=reminderEvents(unpack(payload('D'.repeat(400))),s,0);expect(events).toHaveLength(1200);expect(new Set(events.map(e=>e.id)).size).toBe(1200);expect(events.every(e=>e.id<2147483647)).toBe(true);
+ });
+ it('旧版设置安全迁移：保留自定义排班以外的提前量、暂停旧闹钟并要求确认',()=>{
+  const s=normalizeSettings({confirmed:true,enabled:true,advance:15,times:{N:{start:'23:00',end:'07:00'},T:{start:'09:00',end:'17:00'}}});expect(s.enabled).toBe(false);expect(s.confirmed).toBe(false);expect(s.needsReview).toBe(true);expect(s.times.N.start).toBe('00:00');expect(s.times.T.start).toBe('09:00');expect(s.advance).toBe(15);expect(s.routine.bus.N).toBe('22:10');
+  const existing={...defaultSettings(),enabled:true};expect(normalizeSettings(existing).enabled).toBe(true);
+ });
+ it('拒绝无效时间和起床晚于班车的设置',()=>{
+  const s=defaultSettings();s.routine.wakeTime='08:30';expect(()=>validateSettings(s)).toThrow('起床时间');s.routine.wakeTime='06:40';s.routine.bus.N='25:00';expect(()=>validateSettings(s)).toThrow('班车时间');
+ });
+ it('日历按工作班次生成，并包含独立的起床与班车闹钟',()=>{
+  const text=toICS({'2026-01-01':'D','2026-01-02':'N','2026-01-03':'O'},defaultSettings(),0).replace(/\r\n /g,'');
+  expect(text.match(/BEGIN:VEVENT/g)).toHaveLength(2);expect(text.match(/BEGIN:VALARM/g)).toHaveLength(3);expect(text).toContain('TRIGGER:-PT80M');expect(text).toContain('TRIGGER:-PT60M');expect(text).toContain('TRIGGER:-PT120M');expect(text).toContain('DTSTART:20260101T160000Z');expect(text).toContain('早班起床');expect(text.endsWith('END:VCALENDAR\r\n')).toBe(true);
+ });
 });
 describe('Excel 导入',()=>{
  it('按日期所在行匹配三值，不把行号误当日期',async()=>{const w=new ExcelJS.Workbook();const s=w.addWorksheet('排班');s.getCell('A1').value='倒班表（25年12月-26年12月）';s.getCell('D2').value='三值';s.getCell('G2').value='12月';s.getCell('H2').value='1月';s.getCell('D3').value='早';s.getCell('D4').value='夜';s.getCell('G3').value=31;s.getCell('H4').value=1;expect(await parseExcel(await w.xlsx.writeBuffer())).toEqual({v:1,team:'三值',start:'2025-12-31',days:'DN',tz:'Asia/Shanghai'});});

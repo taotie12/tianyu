@@ -11,6 +11,7 @@ public class ShiftAlarmReceiver extends BroadcastReceiver {
    context.stopService(new Intent(context,ShiftAlarmService.class));
    if("cn.sanzhi.SNOOZE".equals(action))ShiftAlarmPlugin.snooze(context,intent);return;
   }
+  ShiftAlarmPlugin.consume(context,intent.getIntExtra("id",0));
   Intent service=new Intent(context,ShiftAlarmService.class);if(intent.getExtras()!=null)service.putExtras(intent.getExtras());
   if(Build.VERSION.SDK_INT>=26)context.startForegroundService(service);else context.startService(service);
  }

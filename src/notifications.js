@@ -10,7 +10,7 @@ export async function scheduleReminders(schedule,settings){
  const exact=await LocalNotifications.checkExactNotificationSetting();if(exact.exact_alarm!=='granted')throw Error('请先点击“允许精确闹钟”，授权后再开启提醒。');
  await LocalNotifications.createChannel({id:'shift-alarms',name:'上班提醒',description:'三值上班前提醒',importance:5,visibility:1,vibration:true,sound:'default'});
  const events=reminderEvents(schedule,settings);await cancelReminders();
- if(events.length)await ShiftAlarm.replace({alarms:events.map(e=>({id:Number(e.date.replaceAll('-','')),at:e.at,title:`三值 · ${SHIFTS[e.code].name}`,body:`${e.date} ${settings.times[e.code].start} 上班，提前 ${settings.advance} 分钟提醒`}))});
+ if(events.length)await ShiftAlarm.replace({alarms:events.map(e=>({id:e.id,at:e.at,title:`三值 · ${e.title}`,body:e.body}))});
  return events.length;
 }
 export async function requestExact(){if(native)await LocalNotifications.changeExactNotificationSetting();else throw Error('精确闹钟授权仅在 Android 安装版中提供。');}

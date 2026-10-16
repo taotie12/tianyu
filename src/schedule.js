@@ -29,19 +29,82 @@ export function pack(schedule,start,end){
  return validatePayload({v:1,team:'三值',start,days,tz:'Asia/Shanghai'});
 }
 export function importSummary(payload,schedule){const entries=unpack(payload);return {entries,count:Object.keys(entries).length,end:addDays(payload.start,payload.days.length-1),conflicts:Object.entries(entries).filter(([d,c])=>schedule[d]&&schedule[d]!==c).length};}
-export const defaultSettings=()=>({confirmed:false,enabled:false,advance:30,times:Object.fromEntries(Object.entries(SHIFTS).filter(([k])=>k!=='O').map(([k,v])=>[k,{start:v.start,end:v.end}]))});
+// Keep the Excel codes unchanged. U/L are display labels, never extra shifts.
+export const DISPLAY_SHIFTS={...SHIFTS,U:{name:'上夜',short:'上夜',color:'#8b6bb1'},L:{name:'下夜',short:'下夜',color:'#69869e'}};
+export function dayInfo(schedule,date){
+ const code=schedule[date],next=schedule[addDays(date,1)];
+ if(code==='O'&&next==='N')return {code,kind:'U',...DISPLAY_SHIFTS.U,workDate:addDays(date,1)};
+ if(code==='N'&&next&&next!=='N')return {code,kind:'L',...DISPLAY_SHIFTS.L,workDate:date};
+ return {code,kind:code,...SHIFTS[code],workDate:date};
+}
+export const defaultSettings=()=>({
+ schemaVersion:2,confirmed:true,enabled:false,advance:30,
+ times:Object.fromEntries(Object.entries(SHIFTS).filter(([k])=>k!=='O').map(([k,v])=>[k,{start:v.start,end:v.end}])),
+ routine:{wakeEnabled:true,wakeTime:'06:40',busEnabled:true,busAdvance:10,bus:{D:'07:10',A:'15:10',N:'22:10'},startEnabled:false,trainingEnabled:false}
+});
 export function validTime(t){return typeof t==='string'&&/^([01]\d|2[0-3]):[0-5]\d$/.test(t);}
-export function reminderEvents(schedule,settings,now=Date.now()){
- if(!settings.confirmed)return [];
+export function normalizeSettings(saved){
+ const defaults=defaultSettings();if(!saved)return defaults;
+ const legacy=saved.schemaVersion!==2;
+ return {...defaults,...saved,schemaVersion:2,enabled:legacy?false:!!saved.enabled,confirmed:legacy?false:!!saved.confirmed,
+  times:{...defaults.times,...(!legacy?saved.times:{}),T:{...defaults.times.T,...saved.times?.T}},
+  routine:{...defaults.routine,...saved.routine,bus:{...defaults.routine.bus,...saved.routine?.bus}},needsReview:legacy||!!saved.needsReview};
+}
+export function validateSettings(settings){
+ const r=settings.routine;
+ if(!r)throw Error('提醒设置缺失，请重新保存。');
+ for(const k of ['D','A','N','T']){const t=settings.times[k];if(!t||!validTime(t.start)||!validTime(t.end)||t.start===t.end)throw Error('请填写有效且不同的班次开始、结束时间。');}
+ if(!validTime(r.wakeTime)||['D','A','N'].some(k=>!validTime(r.bus[k])))throw Error('请填写有效的起床和班车时间。');
+ if(!Number.isInteger(r.busAdvance)||r.busAdvance<0||r.busAdvance>60)throw Error('班车提前提醒须为 0–60 分钟。');
+ if(!Number.isInteger(settings.advance)||settings.advance<0||settings.advance>180)throw Error('上班提前提醒须为 0–180 分钟。');
+ if(r.bus.D>=settings.times.D.start||r.bus.A>=settings.times.A.start)throw Error('早班和中班班车应在当天上班前出发。');
+ if(r.wakeEnabled&&r.busEnabled&&r.wakeTime>=r.bus.D)throw Error('起床时间应早于早班班车出发时间。');
+ if(settings.enabled&&!settings.confirmed)throw Error('请先核对并确认作息和提醒时间。');
+ if(settings.enabled&&!r.wakeEnabled&&!r.busEnabled&&!r.startEnabled&&!r.trainingEnabled)throw Error('请至少选择一类提醒。');
+ return settings;
+}
+export const shanghaiTime=(date,time)=>Date.parse(`${date}T${time}:00+08:00`);
+export const timeLabel=n=>new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(n));
+export function workSessions(schedule,settings){
  return Object.entries(schedule).sort(([a],[b])=>a.localeCompare(b)).flatMap(([date,code])=>{
-  if(code==='O')return [];const time=settings.times[code];if(!time||!validTime(time.start)||!validTime(time.end))throw Error('请设置有效的班次时间。');
-  const start=Date.parse(`${date}T${time.start}:00+08:00`);const at=start-Number(settings.advance)*60000;
-  return at>now?[{date,code,start,end:Date.parse(`${date}T${time.end}:00+08:00`)+(time.end<=time.start?86400000:0),at}]:[];
+  if(code==='O'||!SHIFTS[code])return [];
+  const time=settings.times[code];if(!time||!validTime(time.start)||!validTime(time.end))throw Error('请设置有效的班次时间。');
+  return [{date,code,start:shanghaiTime(date,time.start),end:shanghaiTime(date,time.end)+(time.end<=time.start?86400000:0)}];
  });
 }
+export function reminderEvents(schedule,settings,now=Date.now()){
+ if(!settings.confirmed)return [];
+ validateSettings(settings);const r=settings.routine;const result=[];
+ for(const session of workSessions(schedule,settings)){
+  const {date,code,start}=session;
+  const add=(kind,at,title,body,index)=>{if(at>now)result.push({...session,kind,at,title,body,id:Number(date.replaceAll('-',''))*10+index,reminderDate:dateKey(new Date(at))});};
+  const shiftText=`${date} ${settings.times[code].start}–${settings.times[code].end} ${SHIFTS[code].name}`;
+  if(code==='T'){
+   if(r.trainingEnabled)add('training',start-settings.advance*60000,'培训提醒',`${shiftText}，提前 ${settings.advance} 分钟提醒。`,4);
+   continue;
+  }
+  if(code==='D'&&r.wakeEnabled)add('wake',shanghaiTime(date,r.wakeTime),'早班起床',`${date} ${r.wakeTime} 起床；${r.bus.D} 班车，08:00 上早班。`,1);
+  if(r.busEnabled){
+   const busDate=code==='N'?addDays(date,-1):date;
+   const depart=shanghaiTime(busDate,r.bus[code]);
+   if(depart>=start)throw Error('班车出发时间必须早于上班时间。');
+   add('bus',depart-r.busAdvance*60000,`${SHIFTS[code].name}班车`,`${busDate} ${r.bus[code]} 班车出发（提前 ${r.busAdvance} 分钟提醒）；${shiftText}。`,2);
+  }
+  if(r.startEnabled)add('start',start-settings.advance*60000,`${SHIFTS[code].name}上班`,`${shiftText}，提前 ${settings.advance} 分钟提醒。`,3);
+ }
+ return result.sort((a,b)=>a.at-b.at||a.id-b.id);
+}
 const utcStamp=n=>new Date(n).toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z/,'Z');
+const icsEscape=s=>s.replaceAll('\\','\\\\').replaceAll('\n','\\n').replaceAll(',','\\,').replaceAll(';','\\;');
+function foldICS(line){const lines=[];let part='',bytes=0;for(const c of line){const n=new TextEncoder().encode(c).length;if(bytes+n>75){lines.push(part);part=' ';bytes=1;}part+=c;bytes+=n;}return [...lines,part].join('\r\n');}
 export function toICS(schedule,settings,now=Date.now()){
+ const alarms=reminderEvents(schedule,settings,now);const dates=[...new Set(alarms.map(e=>e.date))];
  const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Sanzhi//Shift Calendar//ZH','CALSCALE:GREGORIAN','METHOD:PUBLISH'];
- for(const e of reminderEvents(schedule,settings,now))lines.push('BEGIN:VEVENT',`UID:sanzhi-${e.date}@sanzhi.local`,`DTSTAMP:${utcStamp(now)}`,`DTSTART:${utcStamp(e.start)}`,`DTEND:${utcStamp(e.end)}`,`SUMMARY:三值 · ${SHIFTS[e.code].name}`,'BEGIN:VALARM','ACTION:DISPLAY',`DESCRIPTION:三值${SHIFTS[e.code].name}提醒`,`TRIGGER:-PT${settings.advance}M`,'END:VALARM','END:VEVENT');
- return lines.concat('END:VCALENDAR','').join('\r\n');
+ for(const date of dates){
+  const events=alarms.filter(e=>e.date===date),e=events[0];
+  lines.push('BEGIN:VEVENT',`UID:sanzhi-${date}@sanzhi.local`,`DTSTAMP:${utcStamp(now)}`,`DTSTART:${utcStamp(e.start)}`,`DTEND:${utcStamp(e.end)}`,`SUMMARY:三值 · ${SHIFTS[e.code].name}`,`DESCRIPTION:${icsEscape(events.map(x=>`${dateKey(new Date(x.at))} ${timeLabel(x.at)} ${x.title}`).join('\n'))}`);
+  for(const alarm of events)lines.push('BEGIN:VALARM','ACTION:DISPLAY',`DESCRIPTION:${icsEscape(alarm.title+'：'+alarm.body)}`,`TRIGGER:-PT${Math.round((alarm.start-alarm.at)/60000)}M`,'END:VALARM');
+  lines.push('END:VEVENT');
+ }
+ return lines.concat('END:VCALENDAR').map(foldICS).join('\r\n')+'\r\n';
 }
