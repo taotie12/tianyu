@@ -7,6 +7,12 @@ export const SHIFTS = {
 };
 export const dateKey = (date=new Date()) => new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
 export const addDays=(date,n)=>new Date(Date.parse(date+'T00:00:00Z')+n*86400000).toISOString().slice(0,10);
+export const DEFAULT_TEAM='三值';
+export const COMMON_TEAMS=['一值','二值','三值','四值','五值'];
+export function validateTeam(value){
+ if(typeof value!=='string'||!value.trim()||[...value.trim()].length>32||/[\u0000-\u001f\u007f]/.test(value))throw Error('请填写有效的值别名称（1–32 个字），例如一值、五值或其他值别。');
+ return value.trim();
+}
 export function validatePayload(input){
  let p=input;
  if(typeof p==='string'){
@@ -15,18 +21,18 @@ export function validatePayload(input){
   try{p=JSON.parse(s);}catch{throw Error('无法识别二维码，请使用 SZ1 排班格式。');}
  }
  if(!p||Array.isArray(p)||p.v!==1)throw Error('不支持此排班版本，需要 v: 1。');
- if(p.team!=='三值')throw Error('这不是三值排班，请让 AI 提取“三值”后重新生成。');
+ const team=validateTeam(p.team);
  if(p.tz!=='Asia/Shanghai')throw Error('排班时区必须是 Asia/Shanghai。');
  if(typeof p.start!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(p.start)||!Number.isFinite(Date.parse(p.start+'T00:00:00Z'))||addDays(p.start,0)!==p.start)throw Error('起始日期无效。');
  if(p.start<'2000-01-01'||p.start>'2099-12-31')throw Error('仅支持 2000 至 2099 年的排班。');
  if(typeof p.days!=='string'||!p.days.length||p.days.length>400||!/^[DANOT]+$/.test(p.days))throw Error('班次必须是 D/A/N/O/T，且每次导入 1–400 天。');
  if(addDays(p.start,p.days.length-1)>'2099-12-31')throw Error('结束日期超出支持范围。');
- return {v:1,team:'三值',start:p.start,days:p.days,tz:'Asia/Shanghai'};
+ return {v:1,team,start:p.start,days:p.days,tz:'Asia/Shanghai'};
 }
 export function unpack(input){const p=validatePayload(input);return Object.fromEntries([...p.days].map((c,i)=>[addDays(p.start,i),c]));}
-export function pack(schedule,start,end){
+export function pack(schedule,start,end,team=DEFAULT_TEAM){
  let days='';for(let d=start;d<=end;d=addDays(d,1)){if(!schedule[d])throw Error(`${d} 没有排班，请选择连续且完整的日期范围。`);days+=schedule[d];if(days.length>400)throw Error('最多分享 400 天，请缩短日期范围。');}
- return validatePayload({v:1,team:'三值',start,days,tz:'Asia/Shanghai'});
+ return validatePayload({v:1,team,start,days,tz:'Asia/Shanghai'});
 }
 export function importSummary(payload,schedule){const entries=unpack(payload);return {entries,count:Object.keys(entries).length,end:addDays(payload.start,payload.days.length-1),conflicts:Object.entries(entries).filter(([d,c])=>schedule[d]&&schedule[d]!==c).length};}
 // Keep the Excel codes unchanged. U/L are display labels, never extra shifts.
@@ -97,12 +103,13 @@ export function reminderEvents(schedule,settings,now=Date.now()){
 const utcStamp=n=>new Date(n).toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z/,'Z');
 const icsEscape=s=>s.replaceAll('\\','\\\\').replaceAll('\n','\\n').replaceAll(',','\\,').replaceAll(';','\\;');
 function foldICS(line){const lines=[];let part='',bytes=0;for(const c of line){const n=new TextEncoder().encode(c).length;if(bytes+n>75){lines.push(part);part=' ';bytes=1;}part+=c;bytes+=n;}return [...lines,part].join('\r\n');}
-export function toICS(schedule,settings,now=Date.now()){
+export function toICS(schedule,settings,now=Date.now(),team=DEFAULT_TEAM){
+ team=validateTeam(team);
  const alarms=reminderEvents(schedule,settings,now);const dates=[...new Set(alarms.map(e=>e.date))];
  const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Sanzhi//Shift Calendar//ZH','CALSCALE:GREGORIAN','METHOD:PUBLISH'];
  for(const date of dates){
   const events=alarms.filter(e=>e.date===date),e=events[0];
-  lines.push('BEGIN:VEVENT',`UID:sanzhi-${date}@sanzhi.local`,`DTSTAMP:${utcStamp(now)}`,`DTSTART:${utcStamp(e.start)}`,`DTEND:${utcStamp(e.end)}`,`SUMMARY:三值 · ${SHIFTS[e.code].name}`,`DESCRIPTION:${icsEscape(events.map(x=>`${dateKey(new Date(x.at))} ${timeLabel(x.at)} ${x.title}`).join('\n'))}`);
+  lines.push('BEGIN:VEVENT',`UID:sanzhi-${team===DEFAULT_TEAM?'':encodeURIComponent(team)+'-'}${date}@sanzhi.local`,`DTSTAMP:${utcStamp(now)}`,`DTSTART:${utcStamp(e.start)}`,`DTEND:${utcStamp(e.end)}`,`SUMMARY:${icsEscape(team)} · ${SHIFTS[e.code].name}`,`DESCRIPTION:${icsEscape(events.map(x=>`${dateKey(new Date(x.at))} ${timeLabel(x.at)} ${x.title}`).join('\n'))}`);
   for(const alarm of events)lines.push('BEGIN:VALARM','ACTION:DISPLAY',`DESCRIPTION:${icsEscape(alarm.title+'：'+alarm.body)}`,`TRIGGER:-PT${Math.round((alarm.start-alarm.at)/60000)}M`,'END:VALARM');
   lines.push('END:VEVENT');
  }

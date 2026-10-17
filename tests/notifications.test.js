@@ -31,3 +31,8 @@ describe('页面刷新与原生闹钟恢复',()=>{
  });
  it('自动恢复遇到通知被撤销，只报告失败并保留待同步计划',async()=>{const store=memoryStore(plan(true));m.local.checkPermissions.mockResolvedValue({display:'denied'});await expect(syncStoredReminders({store})).rejects.toThrow('通知权限');expect(m.alarm.clear).not.toHaveBeenCalled();expect(m.local.requestPermissions).not.toHaveBeenCalled();expect(store.data().settings.enabled).toBe(true);expect(store.data().alarmSyncPending).toBe(true);});
 });
+
+ it('五值闹钟使用实际值别，持久同步不会继续套用三值标题',async()=>{
+  const data=plan(true);data.team='五值';const store=memoryStore(data);await syncStoredReminders({store});
+  expect(m.alarm.replace.mock.calls[0][0].alarms.every(a=>a.title.startsWith('五值 · '))).toBe(true);expect(store.data().team).toBe('五值');
+ });

@@ -9,10 +9,10 @@ export function syncStoredReminders({request=false,store=localStorage}={}){
   const raw=store.getItem(STORAGE),data=JSON.parse(raw||'null');if(!data)return 0;
   let count=0;
   if(data.settings.enabled){
-   if(data.alarmSyncPending)count=await scheduleReminders(data.schedule,data.settings,{request});
+   if(data.alarmSyncPending)count=await scheduleReminders(data.schedule,data.settings,{request,team:data.team});
    else{
     const restored=await restoreReminders();count=restored.count;
-    if(!count)count=await scheduleReminders(data.schedule,data.settings,{request:false});
+    if(!count)count=await scheduleReminders(data.schedule,data.settings,{request:false,team:data.team});
    }
   }else if(data.alarmSyncPending)await cancelReminders();
   // A newer save may have arrived while the bridge call was in flight.

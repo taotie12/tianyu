@@ -1,18 +1,18 @@
 import {Capacitor,registerPlugin} from '@capacitor/core';
 import {LocalNotifications} from '@capacitor/local-notifications';
-import {reminderEvents} from './schedule';
+import {reminderEvents,validateTeam,DEFAULT_TEAM} from './schedule';
 const ShiftAlarm=registerPlugin('ShiftAlarm');
 export const native=Capacitor.isNativePlatform();
 export async function cancelReminders(){if(!native)return;await ShiftAlarm.clear();const {notifications}=await LocalNotifications.getPending();if(notifications.length)await LocalNotifications.cancel({notifications:notifications.map(n=>({id:n.id}))});}
-export async function scheduleReminders(schedule,settings,{request=true}={}){
+export async function scheduleReminders(schedule,settings,{request=true,team=DEFAULT_TEAM}={}){
  if(!native)throw Error('网页版不能保证后台响铃。请安装 Android APK，或导出到系统日历。');
  const status=await LocalNotifications[request?'requestPermissions':'checkPermissions']();
  if(status.display!=='granted')throw Error('通知权限未开启，请在系统设置中允许通知。');
  const exact=await LocalNotifications.checkExactNotificationSetting();if(exact.exact_alarm!=='granted')throw Error('请先允许精确闹钟，授权后再重试。');
- const events=reminderEvents(schedule,settings);
+ team=validateTeam(team);const events=reminderEvents(schedule,settings);
  // Native replace commits the complete plan and rolls back on failure. Never
  // pre-clear: a transient bridge/permission failure must not destroy old alarms.
- await ShiftAlarm.replace({alarms:events.map(e=>({id:e.id,at:e.at,title:`三值 · ${e.title}`,body:e.body}))});
+ await ShiftAlarm.replace({alarms:events.map(e=>({id:e.id,at:e.at,title:`${team} · ${e.title}`,body:e.body}))});
  return events.length;
 }
 export async function restoreReminders(){return ShiftAlarm.restore();}
