@@ -96,3 +96,94 @@ test('手机首页移除重复操作，底部导入分享及菜单继续可用',
  await bottom.getByRole('button',{name:'分享',exact:true}).click();await expect(page.getByAltText('三值排班导入二维码')).toBeVisible();await page.getByRole('button',{name:'关闭',exact:true}).click();
  await openMenuAction(page,'查看 AI 导入教程');await expect(page.getByRole('dialog',{name:'Excel → AI → 二维码导入教程'})).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
+
+test('长弹窗只滚动正文，关闭按钮保持右上角且恢复页面滚动',async({page})=>{
+ await page.setViewportSize({width:390,height:700});
+ const before=await page.evaluate(()=>({overflow:document.body.style.overflow,y:scrollY}));
+ await page.getByRole('button',{name:'提醒设置',exact:true}).click();
+ const close=page.getByRole('button',{name:'关闭',exact:true}),content=page.locator('.modal-content');
+ const box=await close.boundingBox();expect(box.x).toBeGreaterThan(300);
+ await expect.poll(()=>content.evaluate(e=>e.scrollHeight>e.clientHeight)).toBe(true);
+ await content.hover();await page.mouse.wheel(0,2500);
+ await expect.poll(()=>content.evaluate(e=>e.scrollTop)).toBeGreaterThan(400);
+ const after=await close.boundingBox();expect(after.y).toBeCloseTo(box.y,1);await expect(close).toBeInViewport();
+ expect(await page.evaluate(()=>scrollY)).toBe(before.y);
+ await close.click();await expect(page.getByRole('dialog')).toHaveCount(0);
+ expect(await page.evaluate(()=>document.body.style.overflow)).toBe(before.overflow);
+ await page.mouse.wheel(0,500);await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(before.y);
+});
+test('安卓返回事件关闭所有类型弹窗，首页不拦截返回',async({page})=>{
+ for(const action of ['导入排班','分享排班','提醒与作息','查看 AI 导入教程','闹钟权限与后台设置']){
+  await openMenuAction(page,action);await expect(page.getByRole('dialog')).toBeVisible();
+  expect(await page.evaluate(()=>window.dispatchEvent(new Event('sanzhi-android-back',{cancelable:true})))).toBe(false);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(await page.evaluate(()=>window.dispatchEvent(new Event('sanzhi-android-back',{cancelable:true})))).toBe(true);
+ }
+ await page.getByRole('button',{name:'更多菜单',exact:true}).click();await page.keyboard.press('Escape');await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+test('小屏触摸可滚动正文，横屏可访问底部，关闭按钮不移动',async({browser})=>{
+ const context=await browser.newContext({viewport:{width:360,height:640},hasTouch:true,isMobile:true});const page=await context.newPage();
+ await page.goto('/');await page.getByRole('button',{name:'提醒设置',exact:true}).click();
+ const content=page.locator('.modal-content');const close=page.getByRole('button',{name:'关闭',exact:true});const initial=await close.boundingBox();
+ const session=await context.newCDPSession(page),bounds=await content.boundingBox();
+ for(let step=0;step<4;step++){
+  await session.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:180,y:bounds.y+bounds.height-45}]});
+  for(let i=1;i<=8;i++)await session.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:180,y:bounds.y+bounds.height-45-i*35}]});
+  await session.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+ }
+ await expect.poll(()=>content.evaluate(e=>e.scrollTop)).toBeGreaterThan(300);
+ expect((await close.boundingBox()).y).toBeCloseTo(initial.y,1);await close.click();
+ await page.setViewportSize({width:640,height:360});await page.getByRole('button',{name:'提醒设置',exact:true}).click();
+ await page.getByRole('button',{name:'保存设置',exact:true}).scrollIntoViewIfNeeded();await expect(close).toBeInViewport();
+ await context.close();
+});
+test('权限指南说明厂商开关、后台测试和强行停止限制，菜单显示作者',async({page})=>{
+ await page.getByRole('button',{name:'更多菜单',exact:true}).click();await expect(page.getByText('作者：taotie',{exact:false})).toBeVisible();
+ await page.getByRole('button',{name:'闹钟权限与后台设置',exact:true}).click();
+ await expect(page.getByRole('dialog',{name:'闹钟权限与后台设置',exact:true})).toBeVisible();
+ await expect(page.getByText('4. 锁屏显示',{exact:true})).toBeVisible();
+ await expect(page.getByText('需手动确认',{exact:true})).toHaveCount(3);
+ await expect(page.getByText('已开启',{exact:true})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'30 秒后测试锁屏与后台响铃',exact:true})).toBeDisabled();
+ await expect(page.getByText(/“强行停止\/结束运行”会阻止闹钟/)).toBeVisible();
+ await page.getByRole('button',{name:'关闭',exact:true}).click();await page.getByRole('button',{name:'提醒设置',exact:true}).click();
+ await page.getByRole('button',{name:'闹钟权限与后台设置',exact:true}).click();await expect(page.getByRole('heading',{name:'闹钟权限与后台设置',exact:true})).toBeVisible();
+});
+
+async function mockAndroid(page){
+ await page.addInitScript(()=>{
+  window.CapacitorCustomPlatform={name:'android'};
+  window.__alarmMock={calls:[],failRestore:localStorage.getItem('test-fail-restore')==='1'};
+  const methods={ShiftAlarm:['restore','replace','clear','health','openSettings','test'],LocalNotifications:['checkPermissions','requestPermissions','checkExactNotificationSetting','getPending','cancel']};
+  window.Capacitor={PluginHeaders:Object.entries(methods).map(([name,names])=>({name,methods:names.map(name=>({name,rtype:'promise'}))})),nativePromise:async(plugin,method,options)=>{
+   window.__alarmMock.calls.push({plugin,method,options});
+   if(method==='restore'){if(window.__alarmMock.failRestore)throw Error('模拟后台恢复失败');return {count:3};}
+   if(method==='health')return {manufacturer:'Xiaomi',androidVersion:35,notifications:true,alarmChannel:true,exact:true,fullScreen:true,battery:true,count:3};
+   if(method==='checkPermissions'||method==='requestPermissions')return {display:'granted'};
+   if(method==='checkExactNotificationSetting')return {exact_alarm:'granted'};
+   if(method==='getPending')return {notifications:[]};
+   if(method==='openSettings')return {fallback:false};
+   return {};
+  }};
+ });
+}
+test('安卓桥接故障后仍保留提醒选择，前台恢复成功后清除故障提示',async({page})=>{
+ await page.evaluate(()=>{const x=JSON.parse(localStorage.getItem('sanzhi-calendar-v1'));x.settings.enabled=true;localStorage.setItem('sanzhi-calendar-v1',JSON.stringify(x));localStorage.setItem('test-fail-restore','1');});
+ await mockAndroid(page);await page.reload();await expect(page.getByText('模拟后台恢复失败',{exact:true})).toBeVisible();await expect(page.locator('.status-text')).toHaveText('需检查');
+ expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')).settings.enabled)).toBe(true);
+ expect(await page.evaluate(()=>window.__alarmMock.calls.filter(x=>x.method==='clear'||x.method==='replace'))).toEqual([]);
+ await page.evaluate(()=>{window.__alarmMock.failRestore=false;window.dispatchEvent(new Event('sanzhi-native-resume'));});await expect(page.locator('.status-text')).toHaveText('已开启');await expect(page.getByText('模拟后台恢复失败',{exact:true})).toHaveCount(0);
+ await page.getByRole('button',{name:'提醒设置',exact:true}).click();await page.getByRole('switch',{name:'启用闹钟',exact:true}).uncheck();await page.getByRole('button',{name:'保存设置',exact:true}).click();
+ expect(await page.evaluate(()=>window.__alarmMock.calls.filter(x=>x.method==='clear').length)).toBe(1);
+ const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));expect(saved.settings.enabled).toBe(false);expect(saved.alarmSyncPending).toBe(false);
+});
+test('安卓首次启用后打开权限向导，核对完成隐藏提示，测试使用30秒原生闹钟',async({page})=>{
+ await mockAndroid(page);await page.reload();await page.getByRole('button',{name:'提醒设置',exact:true}).click();await page.getByRole('switch',{name:'启用闹钟',exact:true}).check();await page.getByRole('button',{name:'保存设置',exact:true}).click();
+ await expect(page.getByRole('dialog',{name:'闹钟权限与后台设置',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'30 秒后测试锁屏与后台响铃',exact:true}).click();await expect(page.getByText(/测试闹钟已安排，30 秒后响铃/)).toBeVisible();
+ expect(await page.evaluate(()=>window.__alarmMock.calls.find(x=>x.method==='test').options.delaySeconds)).toBe(30);
+ const checks=page.getByRole('checkbox',{name:'我已在系统设置中核对并允许',exact:true});for(let i=0;i<3;i++)await checks.nth(i).check();
+ await page.getByRole('button',{name:'已完成权限核对',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);await expect(page.getByRole('region',{name:'闹钟权限提示',exact:true})).toHaveCount(0);
+ expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-alarm-permissions-v1')).reviewed)).toBe(true);
+ expect(await page.evaluate(()=>window.__alarmMock.calls.filter(x=>x.method==='replace').length)).toBe(1);
+});

@@ -23,6 +23,7 @@ public class ShiftAlarmService extends Service {
    .addAction(0,"停止响铃",PendingIntent.getBroadcast(this,1,stop,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE))
    .addAction(0,"延后 10 分钟",PendingIntent.getBroadcast(this,2,snooze,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE)).build();
   startForeground(500,notification);
+  getSharedPreferences(ShiftAlarmPlugin.PREFS,0).edit().putLong("lastTriggeredAt",System.currentTimeMillis()).apply();
   if(player!=null){player.release();player=null;}
   try{Uri sound=RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);if(sound==null)sound=RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);player=new MediaPlayer();player.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build());player.setDataSource(this,sound);player.setLooping(true);player.prepare();player.start();}catch(Exception e){android.util.Log.e("ShiftAlarm","Alarm audio failed",e);}
   vibrator=(Vibrator)getSystemService(VIBRATOR_SERVICE);if(vibrator!=null){if(Build.VERSION.SDK_INT>=26)vibrator.vibrate(VibrationEffect.createWaveform(new long[]{0,500,500},0));else vibrator.vibrate(new long[]{0,500,500},0);}
