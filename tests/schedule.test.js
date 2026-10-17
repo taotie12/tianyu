@@ -4,7 +4,7 @@ import ExcelJS from 'exceljs';
 import QRCode from 'qrcode';
 import jsQR from 'jsqr';
 import {PNG} from 'pngjs';
-import {normalizeCalendarStore,importCalendar,calendarFor,previewImport,updateCalendar} from '../src/calendars';
+import {normalizeCalendarStore,importCalendar,calendarFor,previewImport,updateCalendar,deleteCalendar} from '../src/calendars';
 import {createAIPrompt} from '../src/aiPrompt';
 import {addDays,validatePayload,unpack,pack,importSummary,defaultSettings,normalizeSettings,validateSettings,dayInfo,reminderEvents,toICS,dateKey,timeLabel} from '../src/schedule';
 import {parseExcel,readExcel} from '../src/excel';
@@ -114,5 +114,29 @@ describe('任意值别与旧二维码兼容',()=>{
  it('Excel 支持表中的其他值别，并读取位于值别左侧的月份',async()=>{
   const w=new ExcelJS.Workbook(),sheet=w.addWorksheet('排班');sheet.getCell('A1').value='倒班表（26年1月-26年12月）';sheet.getCell('A2').value='1月';sheet.getCell('C2').value='运行六值';sheet.getCell('A3').value=1;sheet.getCell('C3').value='早';
   expect(await parseExcel(await w.xlsx.writeBuffer(),'运行六值')).toEqual({...payload('D'),team:'运行六值'});
+ });
+});
+
+describe('班组删除与空日历',()=>{
+ const base=()=>importCalendar({...payload('DA'),team:'五值'},normalizeCalendarStore({schedule:{'2026-01-01':'N'},settings:{...defaultSettings(),enabled:true}}));
+ it('删除非当前班组不改变当前排班、提醒或其他班组',()=>{
+  const before=base(),next=deleteCalendar(before,'三值');expect(next.team).toBe('五值');expect(next.schedule).toEqual(before.schedule);expect(next.settings).toEqual(before.settings);expect(next.profiles.map(p=>p.team)).toEqual(['五值']);expect(before.profiles).toHaveLength(2);
+ });
+ it('删除当前班组选择剩余班组，并关闭闹钟而保留作息',()=>{
+  const before=base(),next=deleteCalendar(before,'五值');expect(next.team).toBe('三值');expect(next.schedule).toEqual({'2026-01-01':'N'});expect(next.settings.enabled).toBe(false);expect(next.settings.routine).toEqual(before.settings.routine);expect(next.profiles.map(p=>p.team)).toEqual(['三值']);expect(normalizeCalendarStore(next).profiles.map(p=>p.team)).toEqual(['三值']);
+ });
+ it('删除最后一个班组后重读仍为空，不恢复默认三值；再导入只新增目标班组',()=>{
+  const only=deleteCalendar(base(),'三值'),empty=deleteCalendar(only,'五值');expect(empty).toMatchObject({team:null,schedule:{},profiles:[],settings:{enabled:false}});const reloaded=normalizeCalendarStore(JSON.parse(JSON.stringify(empty)));expect(reloaded.team).toBeNull();expect(reloaded.profiles).toEqual([]);expect(updateCalendar(reloaded,{},reloaded.settings,null).profiles).toEqual([]);expect(updateCalendar(reloaded,{},reloaded.settings).team).toBeNull();
+  const imported=importCalendar({...payload('N'),team:'一值（大修中）'},reloaded);expect(imported.profiles.map(p=>p.team)).toEqual(['一值（大修中）']);expect(imported.schedule).toEqual({'2026-01-01':'N'});
+ });
+ it('无效删除不会顺带清空已有数据',()=>{const current=base();expect(()=>deleteCalendar(current,'不存在')).toThrow('未找到');expect(current.profiles).toHaveLength(2);});
+});
+describe('OT105 过渡与大修完整二维码',()=>{
+ for(const [number,prefix] of [[1,'OOODDAO'],[5,'AONNOOA']])it(`${number}值包含10月19至25日且保留全部126天大修数据`,()=>{
+  const old=JSON.parse(readFileSync(new URL(`../docs/ot105-overhaul/ot105-team${number}-overhaul.json`,import.meta.url),'utf8'));
+  const data=JSON.parse(readFileSync(new URL(`../docs/ot105-overhaul/ot105-team${number}-overhaul-with-transition.json`,import.meta.url),'utf8'));
+  expect(data.team).toBe(old.team);expect(data.start).toBe('2026-10-19');expect(data.days.length).toBe(133);expect(data.days.slice(0,7)).toBe(prefix);expect(data.days.slice(7)).toBe(old.days);expect(addDays(data.start,132)).toBe('2027-02-28');
+  const png=PNG.sync.read(readFileSync(new URL(`../docs/ot105-overhaul/ot105-team${number}-overhaul-with-transition.png`,import.meta.url)));expect(validatePayload(jsQR(new Uint8ClampedArray(png.data),png.width,png.height).data)).toEqual(data);
+  const state=normalizeCalendarStore({team:old.team,schedule:unpack(old),settings:defaultSettings(),profiles:[{team:old.team,schedule:unpack(old)},{team:old.team[0]+'值',schedule:{'2026-10-19':'T'}}]});const next=importCalendar(data,state);expect(Object.keys(next.schedule)).toHaveLength(133);expect(next.profiles).toHaveLength(2);expect(next.profiles.find(p=>p.team===old.team[0]+'值').schedule).toEqual({'2026-10-19':'T'});
  });
 });

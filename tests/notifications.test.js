@@ -4,7 +4,8 @@ vi.mock('@capacitor/core',()=>({Capacitor:{isNativePlatform:()=>true},registerPl
 vi.mock('@capacitor/local-notifications',()=>({LocalNotifications:m.local}));
 import {scheduleReminders,cancelReminders,testNotification} from '../src/notifications';
 import {defaultSettings} from '../src/schedule';
-import {syncStoredReminders,STORAGE} from '../src/alarmSync';
+import {normalizeCalendarStore,importCalendar} from '../src/calendars';
+import {syncStoredReminders,deleteStoredCalendar,STORAGE} from '../src/alarmSync';
 beforeEach(()=>{vi.resetAllMocks();vi.useFakeTimers();vi.setSystemTime(new Date('2025-12-30T00:00Z'));m.local.requestPermissions.mockResolvedValue({display:'granted'});m.local.checkPermissions.mockResolvedValue({display:'granted'});m.alarm.restore.mockResolvedValue({count:3});m.local.checkExactNotificationSetting.mockResolvedValue({exact_alarm:'granted'});m.local.getPending.mockResolvedValue({notifications:[]});});
 afterEach(()=>vi.useRealTimers());
 describe('Android 闹钟桥接',()=>{
@@ -35,4 +36,25 @@ describe('页面刷新与原生闹钟恢复',()=>{
  it('五值闹钟使用实际值别，持久同步不会继续套用三值标题',async()=>{
   const data=plan(true);data.team='五值';const store=memoryStore(data);await syncStoredReminders({store});
   expect(m.alarm.replace.mock.calls[0][0].alarms.every(a=>a.title.startsWith('五值 · '))).toBe(true);expect(store.data().team).toBe('五值');
+ });
+
+function twoGroups(){return importCalendar({v:1,team:'五值',start:'2026-01-01',days:'D',tz:'Asia/Shanghai'},normalizeCalendarStore({schedule:{'2026-01-01':'A'},settings:{...defaultSettings(),enabled:true}}));}
+describe('删除班组与原生闹钟一致性',()=>{
+ it('删除其他班组不取消当前提醒',async()=>{const data=twoGroups();data.alarmSyncPending=false;const store=memoryStore(data);await deleteStoredCalendar('三值',{store});expect(store.data().team).toBe('五值');expect(store.data().settings.enabled).toBe(true);expect(store.data().alarmSyncPending).toBe(false);expect(m.alarm.clear).not.toHaveBeenCalled();expect(m.alarm.replace).not.toHaveBeenCalled();});
+ it('当前班组先取消闹钟再删除，之后的前台恢复不重新安排旧提醒',async()=>{const store=memoryStore(twoGroups());await deleteStoredCalendar('五值',{store});expect(m.alarm.clear).toHaveBeenCalledOnce();expect(store.data().team).toBe('三值');expect(store.data().settings.enabled).toBe(false);await syncStoredReminders({store});expect(m.alarm.restore).not.toHaveBeenCalled();expect(m.alarm.replace).not.toHaveBeenCalled();});
+ it('取消失败时保留原班组、排班和启用选择',async()=>{const data=twoGroups(),store=memoryStore(data);m.alarm.clear.mockRejectedValueOnce(Error('cancel failed'));await expect(deleteStoredCalendar('五值',{store})).rejects.toThrow('cancel failed');expect(store.data()).toEqual(data);});
+ it('删除操作与正在提交的提醒串行，随后恢复不会复活旧提醒',async()=>{
+  const data=twoGroups();data.alarmSyncPending=true;const store=memoryStore(data);let finish;m.alarm.replace.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const saving=syncStoredReminders({store});await vi.waitFor(()=>expect(finish).toBeTypeOf('function'));const deleting=deleteStoredCalendar('五值',{store}),resume=syncStoredReminders({store});expect(m.alarm.clear).not.toHaveBeenCalled();finish();await Promise.all([saving,deleting,resume]);expect(m.alarm.clear).toHaveBeenCalledOnce();expect(m.alarm.replace).toHaveBeenCalledOnce();expect(m.alarm.restore).not.toHaveBeenCalled();expect(store.data().settings.enabled).toBe(false);
+ });
+ it('保存失败不会删除本机记录，可重试并彻底清空最后一个班组',async()=>{
+  const data=normalizeCalendarStore({schedule:{'2026-01-01':'D'},settings:defaultSettings()});const store=memoryStore(data),save=store.setItem;store.setItem=()=>{throw Error('disk full');};await expect(deleteStoredCalendar('三值',{store})).rejects.toThrow('disk full');expect(store.data()).toEqual(data);store.setItem=save;await deleteStoredCalendar('三值',{store});expect(store.data()).toMatchObject({team:null,profiles:[],schedule:{}});
+ });
+});
+
+ it('之前切换失败时先同步当前值，避免删除其他值后留下其旧闹钟',async()=>{
+  const data=twoGroups();data.alarmSyncPending=true;const store=memoryStore(data);const result=await deleteStoredCalendar('三值',{store});expect(result.alarmsChanged).toBe(true);expect(store.data().profiles.map(p=>p.team)).toEqual(['五值']);expect(store.data().alarmSyncPending).toBe(false);expect(m.alarm.replace.mock.calls[0][0].alarms.every(a=>a.title.startsWith('五值 · '))).toBe(true);expect(m.alarm.clear).not.toHaveBeenCalled();expect(m.local.requestPermissions).not.toHaveBeenCalled();
+ });
+ it('未完成的切换仍失败时保留待删除班组，不把旧闹钟变成无主记录',async()=>{
+  const data=twoGroups();data.alarmSyncPending=true;const store=memoryStore(data);m.alarm.replace.mockRejectedValueOnce(Error('still pending'));await expect(deleteStoredCalendar('三值',{store})).rejects.toThrow('still pending');expect(store.data()).toEqual(data);
  });

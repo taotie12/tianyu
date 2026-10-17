@@ -20,8 +20,8 @@ const weekday=date=>weekdays[new Date(date+'T12:00:00Z').getUTCDay()];
 const excelDate=value=>value instanceof Date?value.toISOString().slice(0,10):new Date((value-25569)*86400000).toISOString().slice(0,10);
 
 // The companion table has full Excel dates. Use these to establish the year,
-// never the current clock or file modification time. Its pre-overhaul dates
-// are reference data, not part of the main monthly overhaul schedule.
+// never the current clock or file modification time. Include the transition
+// dates as well as the main monthly schedule, checking their overlap.
 const anchors=[];
 for(let row=6;row<=22;row++){
  const value=sheet.getCell(row,21).value;
@@ -52,22 +52,29 @@ for(const [number,baseTeam,referenceCol] of [[1,'一值',15],[5,'五值',19]]){
    const code=codes[sheet.getCell(row,teamCol).text.trim()];assert(code,'Unknown shift '+date);entries[date]=code;
   }
  }
+ const mainStart=Object.keys(entries).sort()[0];
+ let referenceMatches=0,transitionAdded=0;
+ for(const {row,date} of anchors){
+  const code=codes[sheet.getCell(row,referenceCol).text.trim()];assert(code,'Unknown transition shift '+date);
+  if(entries[date]){assert.equal(entries[date],code);referenceMatches++;}
+  else{entries[date]=code;transitionAdded++;}
+ }
+ assert.equal(referenceMatches,10);assert.equal(transitionAdded,7);
+ assert.match(sheet.getCell('G3').text,/10\.26日/);assert.equal(mainStart,`${initialYear}-10-26`);
  const dates=Object.keys(entries).sort();let days='';
  for(let date=dates[0];date<=dates.at(-1);date=addDays(date,1)){assert(entries[date],'Missing date '+date);days+=entries[date];}
- let referenceMatches=0;
- for(const {row,date} of anchors)if(entries[date]){assert.equal(entries[date],codes[sheet.getCell(row,referenceCol).text.trim()]);referenceMatches++;}
- assert.equal(referenceMatches,10);
- assert.match(sheet.getCell('G3').text,/10\.26日/);
- assert.equal(dates[0],`${initialYear}-10-26`);
+ assert.equal(dates[0],`${initialYear}-10-19`);assert.equal(days.length,133);
+ const previous=JSON.parse(await fs.readFile(path.join(output,`ot105-team${number}-overhaul.json`),'utf8'));
+ assert.equal(days.slice(7),previous.days,'Main overhaul schedule must remain unchanged');
  const payload=validatePayload({v:1,team:`${baseTeam}（大修中）`,start:dates[0],days,tz:'Asia/Shanghai'});
- const raw='SZ1:'+JSON.stringify(payload),filename=`ot105-team${number}-overhaul`;
+ const raw='SZ1:'+JSON.stringify(payload),filename=`ot105-team${number}-overhaul-with-transition`;
  const png=await QRCode.toBuffer(raw,{width:1200,margin:4,errorCorrectionLevel:'M'});
  const pixels=PNG.sync.read(png),decoded=jsQR(new Uint8ClampedArray(pixels.data),pixels.width,pixels.height);
  assert.equal(decoded?.data,raw,'QR round-trip failed');assert.deepEqual(validatePayload(decoded.data),payload);
  await fs.writeFile(path.join(output,filename+'.png'),png);
  await fs.writeFile(path.join(output,filename+'.txt'),raw+'\n');
  await fs.writeFile(path.join(output,filename+'.json'),JSON.stringify(payload,null,2)+'\n');
- const summary={team:payload.team,sourceTeam:baseTeam,start:dates[0],end:dates.at(-1),count:days.length,counts:Object.fromEntries(Object.entries(codes).map(([name,code])=>[name,[...days].filter(c=>c===code).length])),referenceMatches,weekdayChecks:dates.length,qrVerified:true};
+ const summary={team:payload.team,sourceTeam:baseTeam,start:dates[0],end:dates.at(-1),count:days.length,counts:Object.fromEntries(Object.entries(codes).map(([name,code])=>[name,[...days].filter(c=>c===code).length])),referenceMatches,transitionAdded,weekdayChecks:dates.length,qrVerified:true};
  summaries.push(summary);console.log(JSON.stringify(summary));
 }
-await fs.writeFile(path.join(output,'summary.json'),JSON.stringify({source:'OT105.xlsx',sheet:sheet.name,yearAnchor:anchors[0].date,sourceScope:'主表 H2:L37（10月至次年2月）；右侧 U6:U22 仅用于年份及重叠日期核对，不导入 10月19日至25日。',schedules:summaries},null,2)+'\n');
+await fs.writeFile(path.join(output,'summary.json'),JSON.stringify({source:'OT105.xlsx',sheet:sheet.name,yearAnchor:anchors[0].date,sourceScope:'包含过渡表 O6:S22 / U6:U22（10月19日至11月4日）及主表 B3:F37 / H2:L37；重叠10天逐日一致，补入10月19日至25日共7天。',schedules:summaries},null,2)+'\n');

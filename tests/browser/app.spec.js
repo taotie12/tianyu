@@ -113,7 +113,7 @@ test('长弹窗只滚动正文，关闭按钮保持右上角且恢复页面滚�
  await page.mouse.wheel(0,500);await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(before.y);
 });
 test('安卓返回事件关闭所有类型弹窗，首页不拦截返回',async({page})=>{
- for(const action of ['导入排班','分享排班','提醒与作息','查看 AI 导入教程','闹钟权限与后台设置']){
+ for(const action of ['导入排班','分享排班','管理班组','提醒与作息','查看 AI 导入教程','闹钟权限与后台设置']){
   await openMenuAction(page,action);await expect(page.getByRole('dialog')).toBeVisible();
   expect(await page.evaluate(()=>window.dispatchEvent(new Event('sanzhi-android-back',{cancelable:true})))).toBe(false);
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -157,6 +157,7 @@ async function mockAndroid(page){
   const methods={ShiftAlarm:['restore','replace','clear','health','openSettings','test'],LocalNotifications:['checkPermissions','requestPermissions','checkExactNotificationSetting','getPending','cancel']};
   window.Capacitor={PluginHeaders:Object.entries(methods).map(([name,names])=>({name,methods:names.map(name=>({name,rtype:'promise'}))})),nativePromise:async(plugin,method,options)=>{
    window.__alarmMock.calls.push({plugin,method,options});
+   if(method==='clear'&&window.__alarmMock.failClear)throw Error('模拟无法取消闹钟');
    if(method==='restore'){if(window.__alarmMock.failRestore)throw Error('模拟后台恢复失败');return {count:3};}
    if(method==='health')return {manufacturer:'Xiaomi',androidVersion:35,notifications:true,alarmChannel:true,exact:true,fullScreen:true,battery:true,count:3};
    if(method==='checkPermissions'||method==='requestPermissions')return {display:'granted'};
@@ -229,4 +230,43 @@ test('安卓切换到五值只安排五值闹钟，切回三值重新安排三�
  expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')).settings.enabled)).toBe(true);
  await importPublishedQR(page,5);let calls=await page.evaluate(()=>window.__alarmMock.calls.filter(c=>c.method==='replace'));expect(calls.at(-1).options.alarms.length).toBeGreaterThan(0);expect(calls.at(-1).options.alarms.every(a=>a.title.startsWith('五值 · '))).toBe(true);
  await page.getByRole('combobox',{name:'当前值别',exact:true}).selectOption('三值');await expect.poll(()=>page.evaluate(()=>window.__alarmMock.calls.filter(c=>c.method==='replace').length)).toBe(2);calls=await page.evaluate(()=>window.__alarmMock.calls.filter(c=>c.method==='replace'));expect(calls.at(-1).options.alarms.every(a=>a.title.startsWith('三值 · '))).toBe(true);expect(await page.evaluate(()=>window.__alarmMock.calls.filter(c=>c.method==='clear').length)).toBe(0);
+});
+
+async function importOverhaulQR(page,number,withTransition){
+ const team=(number===1?'一值':'五值')+'（大修中）';await openMenuAction(page,'导入排班');
+ await page.locator('input[type=file][accept="image/*"]').setInputFiles(`docs/ot105-overhaul/ot105-team${number}-overhaul${withTransition?'-with-transition':''}.png`);
+ await expect(page.getByRole('heading',{name:`找到你的${team}排班`,exact:true})).toBeVisible();
+ await page.getByRole('button',{name:`确认导入 ${withTransition?133:126} 天`,exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
+}
+for(const number of [1,5])test(`新版${number}值大修二维码补齐过渡7天，同名更新且原值排班保留`,async({page})=>{
+ await page.setViewportSize({width:390,height:844});await importPublishedQR(page,number);const before=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));
+ await importOverhaulQR(page,number,false);await importOverhaulQR(page,number,true);
+ const next=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));expect(next.profiles).toHaveLength(3);expect(Object.keys(next.schedule)).toHaveLength(133);expect(Object.keys(next.schedule).sort()[0]).toBe('2026-10-19');
+ for(const profile of before.profiles)expect(next.profiles.find(p=>p.team===profile.team).schedule).toEqual(profile.schedule);
+ const expected=number===1?'OOODDAO':'AONNOOA';for(let i=0;i<7;i++)expect(next.schedule[`2026-10-${19+i}`]).toBe(expected[i]);
+ await page.reload();await expect(page.getByRole('combobox',{name:'当前值别',exact:true})).toHaveValue((number===1?'一值':'五值')+'（大修中）');
+});
+test('管理班组可取消删除，删除其他班组后当前排班保持，重开不会恢复',async({page})=>{
+ await page.setViewportSize({width:390,height:844});await importPublishedQR(page,1);await importPublishedQR(page,5);const before=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));
+ await openMenuAction(page,'管理班组');await page.getByRole('button',{name:'删除一值',exact:true}).click();await expect(page.getByRole('heading',{name:'确认删除“一值”？',exact:true})).toBeVisible();await page.getByRole('button',{name:'取消',exact:true}).click();await expect(page.getByRole('button',{name:'删除一值',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'删除一值',exact:true}).click();await page.getByRole('button',{name:'确认删除',exact:true}).click();await expect(page.getByRole('heading',{name:'确认删除“一值”？',exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'删除一值',exact:true})).toHaveCount(0);
+ await page.getByRole('button',{name:'关闭',exact:true}).click();await page.reload();await expect(page.getByRole('combobox',{name:'当前值别',exact:true})).toHaveValue('五值');const next=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));expect(next.schedule).toEqual(before.schedule);expect(next.profiles.map(p=>p.team)).toEqual(expect.arrayContaining(['三值','五值']));expect(next.profiles.some(p=>p.team==='一值')).toBe(false);
+});
+test('删除最后一个班组后重开仍为空，可重新导入且不恢复默认三值',async({page})=>{
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.setViewportSize({width:390,height:844});await openMenuAction(page,'管理班组');await page.getByRole('button',{name:'删除三值',exact:true}).click();await expect(page.getByText(/这是最后一个班组/)).toBeVisible();await page.getByRole('button',{name:'确认删除',exact:true}).click();await expect(page.getByRole('heading',{name:'还没有班组',exact:true})).toBeVisible();await page.getByRole('button',{name:'关闭',exact:true}).click();
+ await page.reload();await expect(page.getByRole('region',{name:'尚未导入班组',exact:true})).toBeVisible();let stored=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));expect(stored).toMatchObject({team:null,profiles:[],schedule:{},settings:{enabled:false}});
+ await page.getByRole('button',{name:'提醒设置',exact:true}).click();await page.getByRole('button',{name:'保存设置',exact:true}).click();await expect(page.getByRole('region',{name:'尚未导入班组',exact:true})).toBeVisible();
+ await page.getByRole('navigation',{name:'底部导航',exact:true}).getByRole('button',{name:'分享',exact:true}).click();await expect(page.getByRole('dialog',{name:'导入我的排班',exact:true})).toBeVisible();await page.getByRole('button',{name:'关闭',exact:true}).click();
+ await importPublishedQR(page,1);stored=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));expect(stored.team).toBe('一值');expect(stored.profiles.map(p=>p.team)).toEqual(['一值']);expect(errors).toEqual([]);
+});
+test('安卓删除非当前班组不取消或重排当前闹钟',async({page})=>{
+ await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('sanzhi-calendar-v1'));s.settings.enabled=true;localStorage.setItem('sanzhi-calendar-v1',JSON.stringify(s));});await mockAndroid(page);await page.reload();await importPublishedQR(page,5);
+ await openMenuAction(page,'管理班组');await page.getByRole('button',{name:'删除三值',exact:true}).click();await page.getByRole('button',{name:'确认删除',exact:true}).click();await expect(page.getByRole('heading',{name:'确认删除“三值”？',exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'删除三值',exact:true})).toHaveCount(0);
+ const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));expect(saved.team).toBe('五值');expect(saved.settings.enabled).toBe(true);expect(await page.evaluate(()=>window.__alarmMock.calls.filter(c=>c.method==='clear').length)).toBe(0);expect(await page.evaluate(()=>window.__alarmMock.calls.filter(c=>c.method==='replace').length)).toBe(1);
+});
+test('安卓删除当前班组先取消闹钟，取消失败保留数据，重试成功后关闭提醒',async({page})=>{
+ await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('sanzhi-calendar-v1'));s.settings.enabled=true;localStorage.setItem('sanzhi-calendar-v1',JSON.stringify(s));});await mockAndroid(page);await page.reload();await importPublishedQR(page,5);const before=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));
+ await page.evaluate(()=>{window.__alarmMock.failClear=true;});await openMenuAction(page,'管理班组');await page.getByRole('button',{name:'删除五值',exact:true}).click();await page.getByRole('button',{name:'确认删除',exact:true}).click();await expect(page.getByRole('alert')).toContainText('模拟无法取消闹钟');let stored=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));expect(stored.team).toBe('五值');expect(stored.schedule).toEqual(before.schedule);expect(stored.settings.enabled).toBe(true);
+ await page.evaluate(()=>{window.__alarmMock.failClear=false;});await page.getByRole('button',{name:'确认删除',exact:true}).click();await expect(page.getByRole('heading',{name:'确认删除“五值”？',exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'删除五值',exact:true})).toHaveCount(0);stored=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));expect(stored.team).toBe('三值');expect(stored.settings.enabled).toBe(false);expect(stored.profiles.map(p=>p.team)).toEqual(['三值']);expect(await page.evaluate(()=>window.__alarmMock.calls.filter(c=>c.method==='clear').length)).toBe(2);
+ await page.getByRole('button',{name:'关闭',exact:true}).click();await page.reload();await expect(page.locator('.status-text')).toHaveText('待开启');expect(await page.evaluate(()=>window.__alarmMock.calls.filter(c=>c.method==='replace').length)).toBe(0);
 });

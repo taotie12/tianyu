@@ -1,6 +1,8 @@
 import {native,scheduleReminders,restoreReminders,cancelReminders} from './notifications';
+import {normalizeCalendarStore,deleteCalendar} from './calendars';
 export const STORAGE='sanzhi-calendar-v1';
 let queue=Promise.resolve();
+function enqueue(run){const task=queue.catch(()=>{}).then(run);queue=task;return task;}
 // All saves/resumes share one queue. A crash leaves the pending marker in
 // localStorage so the latest user plan is retried next time the WebView starts.
 export function syncStoredReminders({request=false,store=localStorage}={}){
@@ -19,5 +21,27 @@ export function syncStoredReminders({request=false,store=localStorage}={}){
   if(store.getItem(STORAGE)===raw&&data.alarmSyncPending){data.alarmSyncPending=false;store.setItem(STORAGE,JSON.stringify(data));}
   return count;
  };
- const task=queue.catch(()=>{}).then(run);queue=task;return task;
+ return enqueue(run);
+}
+// Cancellation and deletion share the same queue as resume/save. A failed
+// cancellation leaves the calendar intact, so an old alarm is never orphaned.
+export function deleteStoredCalendar(team,{store=localStorage}={}){
+ return enqueue(async()=>{
+  const raw=store.getItem(STORAGE),current=normalizeCalendarStore(JSON.parse(raw||'null'));
+  if(!current)throw Error('没有可删除的班组。');
+  const next=deleteCalendar(current,team);
+  const active=team===current.team,alarmsChanged=active||!!current.alarmSyncPending;
+  if(active&&native)await cancelReminders();
+  // A previous failed switch may have left the old team's native plan running.
+  // Finish that outstanding request before deleting an inactive team, too.
+  else if(current.alarmSyncPending){
+   if(native){
+    if(current.settings.enabled)await scheduleReminders(current.schedule,current.settings,{request:false,team:current.team});
+    else await cancelReminders();
+   }
+   next.alarmSyncPending=false;
+  }
+  if(store.getItem(STORAGE)!==raw)throw Error('排班刚有更新，请重新确认删除。');
+  store.setItem(STORAGE,JSON.stringify(next));return {calendar:next,alarmsChanged};
+ });
 }

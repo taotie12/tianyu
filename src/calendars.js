@@ -8,7 +8,7 @@ function validateSchedule(schedule){
 // did not contain a team: those schedules belong to the original 三值 calendar.
 export function normalizeCalendarStore(data){
  if(!data)return null;
- const team=validateTeam(data.team??DEFAULT_TEAM),schedule=validateSchedule(data.schedule);
+ const team=data.team===null?null:validateTeam(data.team??DEFAULT_TEAM),schedule=validateSchedule(data.schedule);
  if(!data.settings?.times)throw Error('作息设置缺失');
  const profiles=[];
  if(data.profiles!==undefined&&!Array.isArray(data.profiles))throw Error('值别记录无效');
@@ -23,11 +23,16 @@ export function calendarFor(state,team){
  team=validateTeam(team);
  return team===state.team?state.schedule:state.profiles?.find(p=>p.team===team)?.schedule||{};
 }
-export function updateCalendar(state,schedule,settings,team=state.team??DEFAULT_TEAM){
+export function updateCalendar(state,schedule,settings,team=state.team===undefined?DEFAULT_TEAM:state.team){
+ if(team===null){
+  validateSchedule(schedule);
+  if(Object.keys(schedule).length||(state.profiles||[]).length)throw Error('无班组状态不能保留排班');
+  return {...state,team:null,schedule:{},profiles:[],settings:{...settings,enabled:false}};
+ }
  team=validateTeam(team);validateSchedule(schedule);
  let profiles=[...(state.profiles||[])];
  const put=(name,days)=>{profiles=profiles.filter(p=>p.team!==name);profiles.push({team:name,schedule:days});};
- if(state.schedule)put(state.team??DEFAULT_TEAM,state.schedule);
+ if(state.team!==null&&state.schedule)put(state.team??DEFAULT_TEAM,state.schedule);
  put(team,schedule);
  return {...state,team,schedule,settings,profiles};
 }
@@ -38,4 +43,12 @@ export function previewImport(payload,state){
 export function importCalendar(payload,state){
  const p=validatePayload(payload);
  return updateCalendar(state,{...calendarFor(state,p.team),...unpack(p)},state.settings,p.team);
+}
+export function deleteCalendar(state,team){
+ team=validateTeam(team);
+ if(!state.profiles?.some(p=>p.team===team))throw Error('未找到该班组，请刷新后重试。');
+ const profiles=state.profiles.filter(p=>p.team!==team);
+ if(team!==state.team)return {...state,profiles};
+ const next=profiles[0];
+ return {...state,team:next?.team??null,schedule:next?.schedule??{},profiles,settings:{...state.settings,enabled:false},alarmSyncPending:false};
 }
