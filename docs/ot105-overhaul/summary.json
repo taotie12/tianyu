@@ -1,0 +1,42 @@
+{
+  "source": "OT105.xlsx",
+  "sheet": "OT105运行值倒班表",
+  "yearAnchor": "2026-10-19",
+  "sourceScope": "主表 H2:L37（10月至次年2月）；右侧 U6:U22 仅用于年份及重叠日期核对，不导入 10月19日至25日。",
+  "schedules": [
+    {
+      "team": "一值（大修中）",
+      "sourceTeam": "一值",
+      "start": "2026-10-26",
+      "end": "2027-02-28",
+      "count": 126,
+      "counts": {
+        "早": 25,
+        "中": 25,
+        "夜": 25,
+        "休": 51,
+        "培训": 0
+      },
+      "referenceMatches": 10,
+      "weekdayChecks": 126,
+      "qrVerified": true
+    },
+    {
+      "team": "五值（大修中）",
+      "sourceTeam": "五值",
+      "start": "2026-10-26",
+      "end": "2027-02-28",
+      "count": 126,
+      "counts": {
+        "早": 25,
+        "中": 24,
+        "夜": 26,
+        "休": 51,
+        "培训": 0
+      },
+      "referenceMatches": 10,
+      "weekdayChecks": 126,
+      "qrVerified": true
+    }
+  ]
+}
