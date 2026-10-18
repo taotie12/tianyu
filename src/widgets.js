@@ -20,8 +20,9 @@ export async function widgetStatus(){
  if(!Capacitor.isNativePlatform())return {supported:false,count:0};
  return ShiftWidget.status();
 }
-export async function requestWidget(){
+export async function requestWidget(size='4x2'){
+ if(!['4x2','2x2'].includes(size))throw Error('请选择 4×2 或 2×2 小部件');
  if(!Capacitor.isNativePlatform())return {requested:false};
  await syncStoredWidget();
- return ShiftWidget.pin();
+ return ShiftWidget.pin({size});
 }

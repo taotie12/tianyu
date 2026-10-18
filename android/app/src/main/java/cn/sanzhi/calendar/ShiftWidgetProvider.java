@@ -21,7 +21,13 @@ public class ShiftWidgetProvider extends AppWidgetProvider {
     private static final int[] SHIFTS = {R.id.widget_shift_0,R.id.widget_shift_1,R.id.widget_shift_2,R.id.widget_shift_3,R.id.widget_shift_4,R.id.widget_shift_5,R.id.widget_shift_6};
 
     static int[] ids(Context context) {
-        return AppWidgetManager.getInstance(context).getAppWidgetIds(new ComponentName(context, ShiftWidgetProvider.class));
+        AppWidgetManager manager = AppWidgetManager.getInstance(context);
+        int[] wide = manager.getAppWidgetIds(new ComponentName(context, ShiftWidgetProvider.class));
+        int[] small = manager.getAppWidgetIds(new ComponentName(context, SmallShiftWidgetProvider.class));
+        int[] all = new int[wide.length + small.length];
+        System.arraycopy(wide, 0, all, 0, wide.length);
+        System.arraycopy(small, 0, all, wide.length, small.length);
+        return all;
     }
 
     // Serialize complete render passes so an older broadcast cannot paint over
@@ -31,14 +37,18 @@ public class ShiftWidgetProvider extends AppWidgetProvider {
         if (ids.length == 0) { cancelMidnight(context); return; }
         ShiftWidgetStore.Snapshot data = ShiftWidgetStore.read(context);
         long now = System.currentTimeMillis();
-        RemoteViews views = render(context, data, now);
         AppWidgetManager manager = AppWidgetManager.getInstance(context);
-        for (int id : ids) manager.updateAppWidget(id, views);
+        for (Class<?> provider : new Class<?>[]{ShiftWidgetProvider.class, SmallShiftWidgetProvider.class}) {
+            int[] group = manager.getAppWidgetIds(new ComponentName(context, provider));
+            if (group.length == 0) continue;
+            RemoteViews views = render(context, data, now, provider == SmallShiftWidgetProvider.class);
+            for (int id : group) manager.updateAppWidget(id, views);
+        }
         scheduleMidnight(context, now);
     }
 
-    private static RemoteViews render(Context context, ShiftWidgetStore.Snapshot data, long now) {
-        RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.shift_widget);
+    private static RemoteViews render(Context context, ShiftWidgetStore.Snapshot data, long now, boolean compact) {
+        RemoteViews views = new RemoteViews(context.getPackageName(), compact ? R.layout.shift_widget_small : R.layout.shift_widget);
         Intent open = new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent launch = PendingIntent.getActivity(context, 410, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         views.setOnClickPendingIntent(R.id.widget_root, launch);
@@ -48,7 +58,7 @@ public class ShiftWidgetProvider extends AppWidgetProvider {
         views.setViewVisibility(R.id.widget_days, data.team == null ? View.GONE : View.VISIBLE);
         views.setViewVisibility(R.id.widget_empty, data.team == null ? View.VISIBLE : View.GONE);
         List<WidgetSchedule.Day> days = WidgetSchedule.days(data.schedule, now);
-        for (int i = 0; i < days.size(); i++) {
+        for (int i = 0; i < (compact ? 3 : 7); i++) {
             WidgetSchedule.Day day = days.get(i);
             views.setTextViewText(DATES[i], day.shortDate);
             views.setTextViewText(WEEKS[i], i == 0 ? "今天" : day.week);
@@ -58,7 +68,7 @@ public class ShiftWidgetProvider extends AppWidgetProvider {
             views.setInt(SHIFTS[i], "setBackgroundResource", shiftBackground(day.kind));
             views.setContentDescription(SHIFTS[i], day.date + " " + day.week + " " + (day.kind.isEmpty() ? "未排班" : day.label()));
         }
-        views.setTextViewText(R.id.widget_detail, data.team == null ? "点击打开应用，导入或选择班组" : days.get(0).detail(data.times));
+        views.setTextViewText(R.id.widget_detail, data.team == null ? "打开应用导入班组" : compact ? "今天起 3 天" : days.get(0).detail(data.times));
         return views;
     }
 
@@ -101,7 +111,8 @@ public class ShiftWidgetProvider extends AppWidgetProvider {
 
     @Override public void onUpdate(Context context, AppWidgetManager manager, int[] appWidgetIds) { refreshAll(context); }
     @Override public void onEnabled(Context context) { refreshAll(context); }
-    @Override public void onDisabled(Context context) { cancelMidnight(context); }
+    // Removing one size must not stop daily updates for the other size.
+    @Override public void onDisabled(Context context) { refreshAll(context); }
     @Override public void onAppWidgetOptionsChanged(Context context, AppWidgetManager manager, int id, Bundle options) { refreshAll(context); }
     @Override public void onReceive(Context context, Intent intent) {
         super.onReceive(context, intent);

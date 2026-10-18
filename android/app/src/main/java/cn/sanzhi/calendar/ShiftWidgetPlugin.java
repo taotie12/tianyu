@@ -33,11 +33,13 @@ public class ShiftWidgetPlugin extends Plugin {
         call.resolve(result);
     }
     @PluginMethod public void pin(PluginCall call) {
+        String size = call.getString("size", "4x2");
+        if (!"4x2".equals(size) && !"2x2".equals(size)) { call.reject("请选择 4×2 或 2×2 小部件"); return; }
         getActivity().runOnUiThread(() -> {
             try {
                 AppWidgetManager manager = AppWidgetManager.getInstance(getContext());
                 boolean requested = Build.VERSION.SDK_INT >= 26 && manager.isRequestPinAppWidgetSupported()
-                        && manager.requestPinAppWidget(new ComponentName(getContext(), ShiftWidgetProvider.class), null, null);
+                        && manager.requestPinAppWidget(new ComponentName(getContext(), "2x2".equals(size) ? SmallShiftWidgetProvider.class : ShiftWidgetProvider.class), null, null);
                 JSObject result = new JSObject();
                 result.put("requested", requested);
                 call.resolve(result);

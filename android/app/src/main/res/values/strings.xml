@@ -1,7 +1,10 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
     <string name="app_name">值日倒班日历</string>
-    <string name="widget_name">值日 · 未来7天排班</string>
+    <string name="widget_name">值日 · 7天排班（4×2）</string>
+    <string name="widget_small_name">值日 · 3天排班（2×2）</string>
+    <string name="widget_small_description">2×2 紧凑小部件，显示当前班组从今天起3天的排班，自动标注上夜和下夜。</string>
+    <string name="widget_small_subtitle">今天起 3 天</string>
     <string name="widget_description">在桌面查看当前班组从今天起7天的排班，自动标注上夜和下夜。点击打开日历。</string>
     <string name="widget_title">值日 · 倒班日历</string>
     <string name="widget_subtitle">从今天起7天 · 北京时间</string>

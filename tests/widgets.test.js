@@ -47,11 +47,14 @@ describe('桌面小部件同步',()=>{
  });
  it('添加前先同步成功；系统只确认已发起请求，不保证用户已添加',async()=>{
   vi.stubGlobal('localStorage',memoryStore(calendar()));
-  try{expect(await requestWidget()).toEqual({requested:true});expect(m.plugin.sync.mock.invocationCallOrder[0]).toBeLessThan(m.plugin.pin.mock.invocationCallOrder[0]);expect(await widgetStatus()).toEqual({supported:true,count:1});}
+  try{expect(await requestWidget()).toEqual({requested:true});expect(m.plugin.pin).toHaveBeenLastCalledWith({size:'4x2'});expect(m.plugin.sync.mock.invocationCallOrder[0]).toBeLessThan(m.plugin.pin.mock.invocationCallOrder[0]);expect(await requestWidget('2x2')).toEqual({requested:true});expect(m.plugin.pin).toHaveBeenLastCalledWith({size:'2x2'});expect(await widgetStatus()).toEqual({supported:true,count:1});}
   finally{vi.unstubAllGlobals();}
  });
  it('添加前同步失败时停止，不添加显示旧排班的小部件',async()=>{
   vi.stubGlobal('localStorage',memoryStore(calendar()));m.plugin.sync.mockRejectedValueOnce(Error('bridge failed'));
   try{await expect(requestWidget()).rejects.toThrow('bridge failed');expect(m.plugin.pin).not.toHaveBeenCalled();}finally{vi.unstubAllGlobals();}
+ });
+ it('拒绝不支持的尺寸，不发送同步或桌面请求',async()=>{
+  await expect(requestWidget('4x3')).rejects.toThrow('4×2 或 2×2');expect(m.plugin.pin).not.toHaveBeenCalled();expect(m.plugin.sync).not.toHaveBeenCalled();
  });
 });

@@ -303,6 +303,10 @@ test('桌面添加请求前同步当前班组，展示系统确认提示及不�
  await expect(page.getByRole('region',{name:'桌面七天排班预览'}).getByText('五值 · 值日',{exact:true})).toBeVisible();
  await page.getByRole('button',{name:'添加到桌面',exact:true}).click();await expect(page.getByRole('status').filter({hasText:'请在系统弹窗中确认添加'})).toBeVisible();
  const calls=await page.evaluate(()=>window.__widgetMock.calls),pin=calls.findIndex(c=>c.method==='pin');expect(calls.slice(0,pin).filter(c=>c.method==='sync').at(-1).options.team).toBe('五值');
+ expect(calls[pin].options.size).toBe('4x2');
+ await page.getByRole('combobox',{name:'小部件尺寸',exact:true}).selectOption('2x2');
+ const compact=page.getByRole('region',{name:'桌面三天排班预览',exact:true});await expect(compact.locator('.widget-preview-days>div')).toHaveCount(3);
+ await page.getByRole('button',{name:'添加到桌面',exact:true}).click();await expect.poll(()=>page.evaluate(()=>window.__widgetMock.calls.filter(c=>c.method==='pin').at(-1).options.size)).toBe('2x2');
  await page.getByRole('button',{name:'关闭',exact:true}).click();await page.evaluate(()=>{window.__widgetMock.supported=false;});await openMenuAction(page,'桌面小部件');
  await expect(page.getByText(/这个桌面|请使用下面的手动添加方式/)).toBeVisible();await expect(page.getByRole('button',{name:'添加到桌面',exact:true})).toHaveCount(0);
 });
@@ -330,4 +334,12 @@ test('七天预览在北京时间跨过午夜后更新日期，跨月夜班标�
  await page.clock.setSystemTime(new Date('2026-10-31T15:59:30Z'));await page.reload();await openMenuAction(page,'桌面小部件');
  const preview=page.getByRole('region',{name:'桌面七天排班预览',exact:true});await expect(preview.getByLabel('2026-10-31 上夜',{exact:true})).toBeVisible();await expect(preview.getByText('今天上夜 · 今晚 22:10 班车',{exact:true})).toBeVisible();
  await page.clock.runFor(60000);await expect(preview.locator('.widget-preview-days>div').first()).toHaveAttribute('aria-label','2026-11-01 下夜');await expect(preview.getByText('今天下夜 · 08:00 下班',{exact:true})).toBeVisible();
+});
+
+test('2×2 三天预览保留第三天上夜标注，并可切回4×2七天预览',async({page})=>{
+ await page.setViewportSize({width:360,height:640});await page.clock.setSystemTime(new Date('2026-10-19T04:00:00Z'));await openMenuAction(page,'桌面小部件');
+ await page.getByRole('combobox',{name:'小部件尺寸',exact:true}).selectOption('2x2');
+ const compact=page.getByRole('region',{name:'桌面三天排班预览',exact:true});await expect(compact.locator('.widget-preview-days>div')).toHaveCount(3);await expect(compact.getByLabel('2026-10-21 上夜',{exact:true})).toBeVisible();
+ await expect(compact.getByLabel('2026-10-22 夜班',{exact:true})).toHaveCount(0);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.getByRole('combobox',{name:'小部件尺寸',exact:true}).selectOption('4x2');await expect(page.getByRole('region',{name:'桌面七天排班预览',exact:true}).locator('.widget-preview-days>div')).toHaveCount(7);
 });
