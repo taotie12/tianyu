@@ -1,1 +1,16 @@
-{"appId":"cn.sanzhi.calendar","appName":"值日倒班日历","webDir":"dist","android":{"allowMixedContent":false}}
+{
+  "appId": "cn.sanzhi.calendar",
+  "appName": "值日倒班日历",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "css",
+      "initialViewportFitValueHint": "cover",
+      "style": "LIGHT",
+      "hidden": false
+    }
+  }
+}

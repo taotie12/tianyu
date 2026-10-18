@@ -1,0 +1,66 @@
+/* Capacitor 8 supplies these CSS variables from Android WindowInsets, including
+   on WebViews whose env() values stay zero. Older WebViews receive native
+   padding and zero variables, so do not add those insets for a second time. */
+:root {
+  --app-safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --app-safe-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+  --app-safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --app-safe-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+}
+
+.app-shell {
+  padding: var(--app-safe-top) var(--app-safe-right) var(--app-safe-bottom) var(--app-safe-left);
+}
+
+/* Keep scrolling page text from painting behind transparent system bars. */
+.app-shell::before,
+.app-shell::after {
+  content: '';
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  background: #fff;
+  pointer-events: none;
+}
+.app-shell::before { top: 0; height: var(--app-safe-top); }
+.app-shell::after { bottom: 0; height: var(--app-safe-bottom); }
+
+.sidebar {
+  top: var(--app-safe-top);
+  bottom: var(--app-safe-bottom);
+  left: var(--app-safe-left);
+}
+
+.overlay {
+  --dialog-gap: 24px;
+  --dialog-top: max(var(--dialog-gap), var(--app-safe-top));
+  --dialog-bottom: max(var(--dialog-gap), var(--app-safe-bottom));
+  padding: var(--dialog-top) max(var(--dialog-gap), var(--app-safe-right))
+    var(--dialog-bottom) max(var(--dialog-gap), var(--app-safe-left));
+}
+
+.modal {
+  max-height: calc(100vh - var(--dialog-top) - var(--dialog-bottom));
+  max-height: calc(100dvh - var(--dialog-top) - var(--dialog-bottom));
+}
+
+.toast {
+  bottom: calc(30px + var(--app-safe-bottom));
+  left: calc((100% + var(--app-safe-left) - var(--app-safe-right)) / 2);
+  max-width: calc(100vw - var(--app-safe-left) - var(--app-safe-right) - 28px);
+}
+
+@media (max-width: 700px) {
+  .overlay { --dialog-gap: 12px; }
+}
+
+@media (max-width: 560px) {
+  .mobile-nav {
+    left: var(--app-safe-left);
+    right: var(--app-safe-right);
+    height: calc(65px + var(--app-safe-bottom));
+    padding-bottom: calc(7px + var(--app-safe-bottom));
+  }
+  .toast { bottom: calc(82px + var(--app-safe-bottom)); }
+}
