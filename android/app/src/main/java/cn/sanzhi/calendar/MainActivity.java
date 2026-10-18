@@ -5,7 +5,7 @@ import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
  @Override public void onCreate(Bundle state){
-  registerPlugin(ShiftAlarmPlugin.class);super.onCreate(state);
+  registerPlugin(ShiftAlarmPlugin.class);registerPlugin(ShiftWidgetPlugin.class);super.onCreate(state);
   getOnBackPressedDispatcher().addCallback(this,new OnBackPressedCallback(true){
    @Override public void handleOnBackPressed(){
     if(getBridge()==null||getBridge().getWebView()==null){moveTaskToBack(true);return;}

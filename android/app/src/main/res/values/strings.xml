@@ -1,6 +1,14 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
     <string name="app_name">值日倒班日历</string>
+    <string name="widget_name">值日 · 未来7天排班</string>
+    <string name="widget_description">在桌面查看当前班组从今天起7天的排班，自动标注上夜和下夜。点击打开日历。</string>
+    <string name="widget_title">值日 · 倒班日历</string>
+    <string name="widget_subtitle">从今天起7天 · 北京时间</string>
+    <string name="widget_empty">还没有班组\n打开值日，同步你的倒班日历</string>
+    <string name="widget_detail">打开应用后显示你的排班</string>
+    <string name="widget_refresh">刷新桌面排班</string>
+    <string name="widget_dash">—</string>
     <string name="title_activity_main">值日倒班日历</string>
     <string name="package_name">cn.sanzhi.calendar</string>
     <string name="custom_url_scheme">cn.sanzhi.calendar</string>

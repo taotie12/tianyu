@@ -2,6 +2,7 @@ import {test,expect} from '@playwright/test';
 import QRCode from 'qrcode';
 import fs from 'node:fs';
 const sample=JSON.parse(fs.readFileSync('public/sample-schedule.json','utf8'));
+const lastWidgetSync=page=>page.evaluate(()=>window.__widgetMock.calls.filter(c=>c.method==='sync').at(-1)?.options);
 async function openMenuAction(page,name){await page.getByRole('button',{name:'更多菜单',exact:true}).click();await page.getByRole('dialog',{name:'更多',exact:true}).getByRole('button',{name,exact:true}).click();}
 test.beforeEach(async({page})=>{await page.clock.install({time:new Date('2026-10-17T04:00:00Z')});await page.goto('/');await expect(page.getByRole('gridcell',{name:'2026-10-17 早班',exact:true})).toBeVisible();});
 test('月历、班次调整、持久保存与移动端布局',async({page})=>{
@@ -113,7 +114,7 @@ test('长弹窗只滚动正文，关闭按钮保持右上角且恢复页面滚�
  await page.mouse.wheel(0,500);await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(before.y);
 });
 test('安卓返回事件关闭所有类型弹窗，首页不拦截返回',async({page})=>{
- for(const action of ['导入排班','分享排班','管理班组','提醒与作息','查看 AI 导入教程','闹钟权限与后台设置']){
+ for(const action of ['导入排班','分享排班','管理班组','桌面小部件','提醒与作息','查看 AI 导入教程','闹钟权限与后台设置']){
   await openMenuAction(page,action);await expect(page.getByRole('dialog')).toBeVisible();
   expect(await page.evaluate(()=>window.dispatchEvent(new Event('sanzhi-android-back',{cancelable:true})))).toBe(false);
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -154,8 +155,15 @@ async function mockAndroid(page){
  await page.addInitScript(()=>{
   window.CapacitorCustomPlatform={name:'android'};
   window.__alarmMock={calls:[],failRestore:localStorage.getItem('test-fail-restore')==='1'};
-  const methods={ShiftAlarm:['restore','replace','clear','health','openSettings','test'],LocalNotifications:['checkPermissions','requestPermissions','checkExactNotificationSetting','getPending','cancel']};
+  window.__widgetMock={calls:[],supported:true,count:0,failSync:false};
+  const methods={ShiftWidget:['sync','status','pin'],ShiftAlarm:['restore','replace','clear','health','openSettings','test'],LocalNotifications:['checkPermissions','requestPermissions','checkExactNotificationSetting','getPending','cancel']};
   window.Capacitor={PluginHeaders:Object.entries(methods).map(([name,names])=>({name,methods:names.map(name=>({name,rtype:'promise'}))})),nativePromise:async(plugin,method,options)=>{
+   if(plugin==='ShiftWidget'){
+    window.__widgetMock.calls.push({method,options});
+    if(method==='sync'){if(window.__widgetMock.failSync)throw Error('模拟桌面同步失败');return {count:window.__widgetMock.count};}
+    if(method==='status')return {supported:window.__widgetMock.supported,count:window.__widgetMock.count};
+    if(method==='pin')return {requested:window.__widgetMock.supported};
+   }
    window.__alarmMock.calls.push({plugin,method,options});
    if(method==='clear'&&window.__alarmMock.failClear)throw Error('模拟无法取消闹钟');
    if(method==='restore'){if(window.__alarmMock.failRestore)throw Error('模拟后台恢复失败');return {count:3};}
@@ -269,4 +277,57 @@ test('安卓删除当前班组先取消闹钟，取消失败保留数据，重�
  await page.evaluate(()=>{window.__alarmMock.failClear=true;});await openMenuAction(page,'管理班组');await page.getByRole('button',{name:'删除五值',exact:true}).click();await page.getByRole('button',{name:'确认删除',exact:true}).click();await expect(page.getByRole('alert')).toContainText('模拟无法取消闹钟');let stored=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));expect(stored.team).toBe('五值');expect(stored.schedule).toEqual(before.schedule);expect(stored.settings.enabled).toBe(true);
  await page.evaluate(()=>{window.__alarmMock.failClear=false;});await page.getByRole('button',{name:'确认删除',exact:true}).click();await expect(page.getByRole('heading',{name:'确认删除“五值”？',exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'删除五值',exact:true})).toHaveCount(0);stored=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));expect(stored.team).toBe('三值');expect(stored.settings.enabled).toBe(false);expect(stored.profiles.map(p=>p.team)).toEqual(['三值']);expect(await page.evaluate(()=>window.__alarmMock.calls.filter(c=>c.method==='clear').length)).toBe(2);
  await page.getByRole('button',{name:'关闭',exact:true}).click();await page.reload();await expect(page.locator('.status-text')).toHaveText('待开启');expect(await page.evaluate(()=>window.__alarmMock.calls.filter(c=>c.method==='replace').length)).toBe(0);
+});
+
+test('手机菜单提供七天小部件预览与手动添加说明，网页版不冒充原生添加',async({page})=>{
+ await page.setViewportSize({width:360,height:640});await openMenuAction(page,'桌面小部件');
+ const preview=page.getByRole('region',{name:'桌面七天排班预览',exact:true});await expect(preview).toBeVisible();
+ await expect(preview.locator('.widget-preview-days>div')).toHaveCount(7);await expect(preview.getByLabel('2026-10-17 早班',{exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'添加到桌面',exact:true})).toHaveCount(0);await expect(page.getByText(/桌面小部件需要安卓安装版/)).toBeVisible();
+ await page.getByRole('heading',{name:'也可以长按桌面添加',exact:true}).scrollIntoViewIfNeeded();await expect(page.getByRole('button',{name:'关闭',exact:true})).toBeInViewport();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ expect(await page.evaluate(()=>window.dispatchEvent(new Event('sanzhi-android-back',{cancelable:true})))).toBe(false);await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+test('安卓小部件在关闭闹钟时也随二维码导入、切换、手动修改同步',async({page})=>{
+ await mockAndroid(page);await page.reload();await expect.poll(async()=>(await lastWidgetSync(page))?.team).toBe('三值');
+ expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')).settings.enabled)).toBe(false);
+ await importPublishedQR(page,5);await expect.poll(async()=>(await lastWidgetSync(page))?.team).toBe('五值');
+ let data=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));expect((await lastWidgetSync(page)).schedule).toEqual(data.schedule);
+ await page.getByRole('combobox',{name:'当前值别',exact:true}).selectOption('三值');await expect.poll(async()=>(await lastWidgetSync(page))?.team).toBe('三值');
+ await page.getByRole('gridcell',{name:'2026-10-17 早班',exact:true}).click();await page.getByRole('button',{name:'调整当天班次',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'培训',exact:true}).click();
+ await expect.poll(async()=>(await lastWidgetSync(page))?.schedule['2026-10-17']).toBe('T');
+ expect(await page.evaluate(()=>window.__alarmMock.calls.filter(c=>c.method==='replace').length)).toBe(0);
+});
+test('桌面添加请求前同步当前班组，展示系统确认提示及不支持的手动入口',async({page})=>{
+ await mockAndroid(page);await page.reload();await importPublishedQR(page,5);await openMenuAction(page,'桌面小部件');
+ await expect(page.getByRole('region',{name:'桌面七天排班预览'}).getByText('五值 · 值日',{exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'添加到桌面',exact:true}).click();await expect(page.getByRole('status').filter({hasText:'请在系统弹窗中确认添加'})).toBeVisible();
+ const calls=await page.evaluate(()=>window.__widgetMock.calls),pin=calls.findIndex(c=>c.method==='pin');expect(calls.slice(0,pin).filter(c=>c.method==='sync').at(-1).options.team).toBe('五值');
+ await page.getByRole('button',{name:'关闭',exact:true}).click();await page.evaluate(()=>{window.__widgetMock.supported=false;});await openMenuAction(page,'桌面小部件');
+ await expect(page.getByText(/这个桌面|请使用下面的手动添加方式/)).toBeVisible();await expect(page.getByRole('button',{name:'添加到桌面',exact:true})).toHaveCount(0);
+});
+test('删除当前班组更新桌面值别，删除最后一个后清空且重开不会复活',async({page})=>{
+ await mockAndroid(page);await page.reload();await importPublishedQR(page,5);await openMenuAction(page,'管理班组');
+ for(const [name,next] of [['五值','三值'],['三值',null]]){
+  await page.getByRole('button',{name:'删除'+name,exact:true}).click();await page.getByRole('button',{name:'确认删除',exact:true}).click();
+  await expect.poll(async()=>(await lastWidgetSync(page))?.team).toBe(next);
+ }
+ expect((await lastWidgetSync(page)).schedule).toEqual({});await page.getByRole('button',{name:'关闭',exact:true}).click();await page.reload();
+ await expect(page.getByRole('region',{name:'尚未导入班组',exact:true})).toBeVisible();await expect.poll(()=>lastWidgetSync(page)).toMatchObject({team:null,schedule:{}});
+});
+test('闹钟恢复失败仍同步桌面，小部件失败可重试且不修改排班',async({page})=>{
+ await page.evaluate(()=>{const data=JSON.parse(localStorage.getItem('sanzhi-calendar-v1'));data.settings.enabled=true;localStorage.setItem('sanzhi-calendar-v1',JSON.stringify(data));localStorage.setItem('test-fail-restore','1');});
+ await mockAndroid(page);await page.reload();await expect(page.getByText('模拟后台恢复失败',{exact:true})).toBeVisible();await expect.poll(async()=>(await lastWidgetSync(page))?.team).toBe('三值');
+ const before=await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')));
+ await page.evaluate(()=>{window.__widgetMock.failSync=true;window.dispatchEvent(new Event('sanzhi-native-resume'));});await openMenuAction(page,'桌面小部件');
+ await expect(page.getByRole('alert')).toContainText('模拟桌面同步失败');await page.getByRole('button',{name:'添加到桌面',exact:true}).click();await expect(page.getByRole('alert')).toContainText('模拟桌面同步失败');
+ expect(await page.evaluate(()=>window.__widgetMock.calls.some(c=>c.method==='pin'))).toBe(false);
+ await page.evaluate(()=>{window.__widgetMock.failSync=false;});await page.getByRole('button',{name:'刷新桌面排班',exact:true}).click();await expect(page.getByRole('alert')).toHaveCount(0);
+ await expect(page.getByText('已刷新桌面排班。',{exact:true})).toBeVisible();expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('sanzhi-calendar-v1')))).toEqual(before);
+});
+test('七天预览在北京时间跨过午夜后更新日期，跨月夜班标注一致',async({page})=>{
+ await page.evaluate(()=>{const data=JSON.parse(localStorage.getItem('sanzhi-calendar-v1'));data.schedule={'2026-10-31':'O','2026-11-01':'N','2026-11-02':'O'};data.profiles=[{team:data.team,schedule:data.schedule}];localStorage.setItem('sanzhi-calendar-v1',JSON.stringify(data));});
+ await page.clock.setSystemTime(new Date('2026-10-31T15:59:30Z'));await page.reload();await openMenuAction(page,'桌面小部件');
+ const preview=page.getByRole('region',{name:'桌面七天排班预览',exact:true});await expect(preview.getByLabel('2026-10-31 上夜',{exact:true})).toBeVisible();await expect(preview.getByText('今天上夜 · 今晚 22:10 班车',{exact:true})).toBeVisible();
+ await page.clock.runFor(60000);await expect(preview.locator('.widget-preview-days>div').first()).toHaveAttribute('aria-label','2026-11-01 下夜');await expect(preview.getByText('今天下夜 · 08:00 下班',{exact:true})).toBeVisible();
 });
